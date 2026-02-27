@@ -20,4 +20,4 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.uv.sources]
-te-net-lib = { git = "https://github.com/yifen9/te-net-lib", rev = "v0.1.1" }
+te-net-lib = { git = "https://github.com/yifen9/te-net-lib", rev = "f70c002" }
