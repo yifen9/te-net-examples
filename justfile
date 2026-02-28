@@ -102,3 +102,18 @@ pl-qf-10 I="data/pipeline/qf/00_raw" O="data/pipeline/qf/10_design" S="src" C="c
 
 pl-qf-11 I="data/pipeline/qf/10_design" O="data/pipeline/qf/11_generate" S="src" C="config/pipeline/qf/11_generate.yaml":
     uv run python scripts/pipeline/qf/11_generate.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}"
+
+pl-qf-12 I="data/pipeline/qf/11_generate" O="data/pipeline/qf/12_preprocess" S="src" C="config/pipeline/qf/12_preprocess.yaml":
+    uv run python scripts/pipeline/qf/12_preprocess.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}"
+
+pl-qf-13 I="data/pipeline/qf/12_preprocess" O="data/pipeline/qf/13_te_estimate" S="src" C="config/pipeline/qf/13_te_estimate.yaml":
+    uv run python scripts/pipeline/qf/13_te_estimate.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}"
+
+pl-qf-14 I="data/pipeline/qf/13_te_estimate" O="data/pipeline/qf/14_graph_select" S="src" C="config/pipeline/qf/14_graph_select.yaml":
+    uv run python scripts/pipeline/qf/14_graph_select.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}"
+
+pl-qf-15 I="data/pipeline/qf/14_graph_select" O="data/pipeline/qf/15_metrics" S="src" C="config/pipeline/qf/15_metrics.yaml":
+    uv run python scripts/pipeline/qf/15_metrics.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}"
+
+pl-qf-16 I="data/pipeline/qf/15_metrics" O="data/pipeline/qf/16_report_figures" S="src" C="config/pipeline/qf/16_report_figures.yaml":
+    uv run python scripts/pipeline/qf/16_report_figures.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}"

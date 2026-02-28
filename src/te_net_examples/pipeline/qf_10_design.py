@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import shutil
 
 from te_net_examples.io.csv import write_csv
 from te_net_examples.io.json import write_json
@@ -173,69 +174,90 @@ def _design_rows(cfg: dict[str, Any]) -> pd.DataFrame:
                                         "te.estimators params must be a mapping"
                                     )
 
-                                for sel in sel_list:
-                                    sel_name = str(sel.get("name", "")).strip()
-                                    if not sel_name:
-                                        raise ValueError(
-                                            "graph.select item missing name"
-                                        )
-                                    sel_params = sel.get("params", {})
-                                    if not isinstance(sel_params, dict):
-                                        raise ValueError(
-                                            "graph.select params must be a mapping"
-                                        )
-
-                                    density_list = _pick_list(
-                                        sel_params.get("density", [None]),
-                                        "graph.select.params.density",
+                                te_grid: dict[str, list[Any]] = {}
+                                for k, v in te_params.items():
+                                    te_grid[str(k)] = _pick_list(
+                                        v, f"te.{te_name}.params.{k}"
                                     )
+                                te_keys = sorted(te_grid.keys())
 
-                                    for density in density_list:
-                                        for hk in hub_k_list:
-                                            row: dict[str, Any] = {
-                                                "design_id": int(design_id),
-                                                "trial": int(trial),
-                                                "dgp": dgp_name,
-                                                "N": int(N),
-                                                "T": int(T),
-                                                "lag": int(lag),
-                                                "exclude_self": bool(exclude_self),
-                                                "fn_enabled": bool(fn_enabled),
-                                                "fn_center": bool(fn_center),
-                                                "fn_n_components": int(fn_k),
-                                                "te_name": te_name,
-                                                "sel_name": sel_name,
-                                                "hub_k": int(hk),
-                                            }
+                                def iter_te(
+                                    idx: int, cur: dict[str, Any]
+                                ) -> list[dict[str, Any]]:
+                                    if idx >= len(te_keys):
+                                        return [cur]
+                                    key = te_keys[idx]
+                                    out: list[dict[str, Any]] = []
+                                    for val in te_grid[key]:
+                                        out.extend(iter_te(idx + 1, {**cur, key: val}))
+                                    return out
 
-                                            for k, v in dgp_par.items():
-                                                row[f"dgp_{k}"] = v
+                                te_combos = iter_te(0, {})
 
-                                            for k, v in te_params.items():
-                                                row[f"te_{k}"] = v
-
-                                            row["sel_mode"] = sel_params.get(
-                                                "mode", "abs"
+                                for te_par in te_combos:
+                                    for sel in sel_list:
+                                        sel_name = str(sel.get("name", "")).strip()
+                                        if not sel_name:
+                                            raise ValueError(
+                                                "graph.select item missing name"
                                             )
-                                            row["sel_exclude_self"] = bool(
-                                                sel_params.get("exclude_self", True)
+                                        sel_params = sel.get("params", {})
+                                        if not isinstance(sel_params, dict):
+                                            raise ValueError(
+                                                "graph.select params must be a mapping"
                                             )
-                                            row["sel_density"] = density
 
-                                            seed_key = [
-                                                f"trial={trial}",
-                                                f"dgp={dgp_name}",
-                                                f"N={int(N)}",
-                                                f"T={int(T)}",
-                                                f"fnk={int(fn_k)}",
-                                                f"te={te_name}",
-                                                f"dens={density}",
-                                                f"hubk={int(hk)}",
-                                            ]
-                                            row["seed_key"] = "|".join(seed_key)
+                                        density_list = _pick_list(
+                                            sel_params.get("density", [None]),
+                                            "graph.select.params.density",
+                                        )
 
-                                            rows.append(row)
-                                            design_id += 1
+                                        for density in density_list:
+                                            for hk in hub_k_list:
+                                                row: dict[str, Any] = {
+                                                    "design_id": int(design_id),
+                                                    "trial": int(trial),
+                                                    "dgp": dgp_name,
+                                                    "N": int(N),
+                                                    "T": int(T),
+                                                    "lag": int(lag),
+                                                    "exclude_self": bool(exclude_self),
+                                                    "fn_enabled": bool(fn_enabled),
+                                                    "fn_center": bool(fn_center),
+                                                    "fn_n_components": int(fn_k),
+                                                    "te_name": te_name,
+                                                    "sel_name": sel_name,
+                                                    "hub_k": int(hk),
+                                                }
+
+                                                for k, v in dgp_par.items():
+                                                    row[f"dgp_{k}"] = v
+
+                                                for k, v in te_par.items():
+                                                    row[f"te_{k}"] = v
+
+                                                row["sel_mode"] = sel_params.get(
+                                                    "mode", "abs"
+                                                )
+                                                row["sel_exclude_self"] = bool(
+                                                    sel_params.get("exclude_self", True)
+                                                )
+                                                row["sel_density"] = density
+
+                                                seed_key = [
+                                                    f"trial={trial}",
+                                                    f"dgp={dgp_name}",
+                                                    f"N={int(N)}",
+                                                    f"T={int(T)}",
+                                                    f"fnk={int(fn_k)}",
+                                                    f"te={te_name}",
+                                                    f"dens={density}",
+                                                    f"hubk={int(hk)}",
+                                                ]
+                                                row["seed_key"] = "|".join(seed_key)
+
+                                                rows.append(row)
+                                                design_id += 1
 
     df = pd.DataFrame(rows)
     df = df.sort_values(["design_id"], ascending=[True]).reset_index(drop=True)
@@ -315,6 +337,12 @@ def run_qf_10_design(
         logger.info(_jline("stage", component, "start", run_dir=run_dir))
         logger.info(_jline("input", component, "input_root", path=input_root))
         logger.info(_jline("input", component, "config", path=cfg_path))
+
+        cfg_dir = os.path.join(run_dir, "cfg")
+        os.makedirs(cfg_dir, exist_ok=True)
+        cfg_copied = os.path.join(cfg_dir, os.path.basename(cfg_path))
+        shutil.copy2(cfg_path, cfg_copied)
+        logger.info(_jline("output", component, "config_copied", path=cfg_copied))
 
         df = _design_rows(cfg)
         design_out = os.path.join(run_dir, "design.csv")

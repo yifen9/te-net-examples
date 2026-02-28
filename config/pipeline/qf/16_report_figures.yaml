@@ -1,0 +1,24 @@
+name: 16_report_figures_v1
+
+groupby:
+  keys:
+    - dgp
+    - te_name
+    - sel_density
+    - fn_n_components
+    - N
+    - T
+
+metrics:
+  cols:
+    - precision
+    - recall
+    - f1
+    - hub_rec_nio
+    - density_pred
+
+output:
+  save_report_csv: true
+  save_specs_json: true
+  save_figures: true
+  max_points_scatter: 5000

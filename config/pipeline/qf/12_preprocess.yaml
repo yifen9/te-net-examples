@@ -1,0 +1,8 @@
+name: 12_preprocess_v1
+
+output:
+  save_returns_neutral: true
+  save_svd_json: true
+  save_factors: false
+  save_components: false
+  

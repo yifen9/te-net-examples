@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import shutil
 
 from te_net_examples.io.csv import read_csv
 from te_net_examples.io.json import read_json, write_json
@@ -419,6 +420,12 @@ def run_qf_11_generate(
             _jline("input", component, "design_summary", path=design_summary_in)
         )
         logger.info(_jline("input", component, "config", path=cfg_path))
+
+        cfg_dir = os.path.join(run_dir, "cfg")
+        os.makedirs(cfg_dir, exist_ok=True)
+        cfg_copied = os.path.join(cfg_dir, os.path.basename(cfg_path))
+        shutil.copy2(cfg_path, cfg_copied)
+        logger.info(_jline("output", component, "config_copied", path=cfg_copied))
 
         df = _df_from_csv(design_in)
         df = df.rename(columns={c: c.strip() for c in df.columns})

@@ -1,0 +1,13 @@
+name: 15_metrics_v1
+
+input:
+  true_adj_required: true
+
+output:
+  save_metrics_json: true
+  save_metrics_csv: true
+  save_signal_json: true
+
+signal:
+  normalize_nio: true
+  exclude_self: true

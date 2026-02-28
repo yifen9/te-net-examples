@@ -1,0 +1,11 @@
+name: 13_te_estimate_v1
+
+input:
+  use_neutral: true
+
+output:
+  save_beta: true
+  save_intercept: true
+  save_resid_var: true
+  save_n_iter: true
+  save_te_json: true

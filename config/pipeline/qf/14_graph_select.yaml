@@ -1,0 +1,5 @@
+name: 14_graph_select_v1
+
+output:
+  save_adj: true
+  save_select_json: true
