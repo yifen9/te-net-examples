@@ -12,9 +12,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("input_dir_cs")
     p.add_argument("output_root")
     p.add_argument("src_dir")
-    p.add_argument(
-        "--portfolio_sort-filename", default="portfolio_sort.csv"
-    )
+    p.add_argument("--portfolio_sort-filename", default="portfolio_sort.csv")
     p.add_argument("--cs-filename", default="cs_ols.csv")
     return p
 

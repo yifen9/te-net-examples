@@ -71,7 +71,7 @@ def create_source_meta_run(
     env_path = _require_file(str(repo_root / "uv.lock"))
 
     params: dict[str, Any] = {
-        "stage": component,
+        "component": component,
         "input_dir": os.path.abspath(input_dir),
         "output_root": output_root_abs,
         "source_file": source_name,

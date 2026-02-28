@@ -1,0 +1,11 @@
+name: 11_generate_v1
+
+stability:
+  max_var_spectral_radius: 0.98
+  max_tries: 10
+
+output:
+  returns_format: npy
+  save_true_adj: true
+  save_trial_json: true
+  extras_mode: summary

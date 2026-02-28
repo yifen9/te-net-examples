@@ -183,6 +183,7 @@ def run_qf_02_universe(
         "raw_dir": os.path.abspath(raw_dir),
         "output_root": output_root_abs,
         "universe_name": universe_name,
+        "component": component,
     }
 
     meta = build_meta(

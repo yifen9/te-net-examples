@@ -97,5 +97,8 @@ pl-qf-08 I6="data/pipeline/qf/06_report" O="data/pipeline/qf/08_specs" S="src":
 pl-qf-09 I4="data/pipeline/qf/04_portfolio_sort" I5="data/pipeline/qf/05_cs_ols" O="data/pipeline/qf/09_figures" S="src":
     uv run python scripts/pipeline/qf/09_figures.py "$(just find-last {{I4}})" "$(just find-last {{I5}})" "{{O}}" "{{S}}"
 
-pl-qf-10 I4="data/pipeline/qf/04_portfolio_sort" I5="data/pipeline/qf/05_cs_ols" O="data/pipeline/qf/09_figures" S="src":
-    uv run python scripts/pipeline/qf/09_figures.py "$(just find-last {{I4}})" "$(just find-last {{I5}})" "{{O}}" "{{S}}"
+pl-qf-10 I="data/pipeline/qf/00_raw" O="data/pipeline/qf/10_design" S="src" C="config/pipeline/qf/10_design.yaml":
+    uv run python scripts/pipeline/qf/10_design.py "{{I}}" "{{O}}" "{{S}}" "{{C}}"
+
+pl-qf-11 I="data/pipeline/qf/10_design" O="data/pipeline/qf/11_generate" S="src" C="config/pipeline/qf/11_generate.yaml":
+    uv run python scripts/pipeline/qf/11_generate.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}"
