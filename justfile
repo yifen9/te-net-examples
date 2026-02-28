@@ -53,3 +53,11 @@ ci:
     just fmt-check && \
     just lint-check && \
     just test
+
+DATA_CRSP_DATE := "2026_02_13"
+
+find-last D:
+    uv run python scripts/tools/find_last.py {{D}}
+
+pl-qf-01 DATE=DATA_CRSP_DATE O="data/pipeline/qf/01_meta" S="src":
+    uv run python scripts/pipeline/qf/01_meta.py "data/external/crsp/{{DATE}}" "{{O}}" "{{S}}"

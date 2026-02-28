@@ -1,0 +1,67 @@
+dataset:
+  name: "CRSP Daily Stock File (2005-2025) export via WRDS"
+  provider: "Center for Research in Security Prices (CRSP), University of Chicago Booth School of Business"
+  version: "2026_02_13"
+  identifier: "crsp-daily-2005-2025-wrds-export"
+  access_url: "https://wrds-www.wharton.upenn.edu/"
+  license: "Proprietary (CRSP via WRDS)"
+
+provenance:
+  retrieved_at: "2026-02-13T00:00:00Z"
+  retrieved_by: "Yang Haotian"
+  retrieval_method: "WRDS web export (CRSP Daily Stock File)"
+  notes:
+    - "Original CRSP export is not included in this repository due to size (>2 GB)."
+    - "Repository contains only processed replication artifacts in data/empirical/."
+    - "Tickers may change over time; PERMNO should be treated as stable identifier."
+    - "CRSP data assumed adjusted for splits/dividends as provided by CRSP."
+
+coverage:
+  start: "2005-02-01"
+  end: "2025-12-31"
+  frequency: "daily"
+  universe:
+    selection:
+      description: "Monthly rebalanced rolling universe, top ~100 stocks by 60-day dollar volume."
+      rebalance_rule: "First trading day of each month"
+      lookback_window_days: 60
+      metric: "|Price| × Volume"
+    resulting_universe:
+      unique_tickers_approx: 150
+      rolling_size_approx: 100
+
+required_fields:
+  - "PERMNO"
+  - "Ticker"
+  - "DlyCalDt"
+  - "DlyPrc"
+  - "DlyVol"
+  - "DlyRet"
+
+files:
+  raw:
+    format: "csv.gz"
+    included_in_repo: false
+    location: "data/external/crsp/2026_02_13/crsp_daily_2005_2025.csv.gz"
+    logical_name: "crsp_daily_2005_2025.csv.gz"
+  processed_replication_artifacts:
+    included_in_repo: true
+    items:
+      - logical_name: "universe_500.csv"
+        format: "csv"
+        location: "data/empirical/universe_500.csv"
+        description: "Processed stock universe metadata (rolling universe selection output)."
+        sha256: ""
+      - logical_name: "te_features_weekly.csv"
+        format: "csv"
+        location: "data/empirical/te_features_weekly.csv"
+        description: "Weekly TE/NIO features and forward returns for replication."
+        sha256: ""
+
+citations:
+  crsp:
+    text: "Center for Research in Security Prices (CRSP), University of Chicago Booth School of Business. CRSP Daily Stock File. Accessed February 13, 2026."
+  fama_french_5:
+    text: "Fama, E. F., & French, K. R. (2015). A five-factor asset pricing model. Journal of Financial Economics, 116(1), 1-22."
+  momentum:
+    text: "Carhart, M. M. (1997). On persistence in mutual fund performance. The Journal of Finance, 52(1), 57-82."

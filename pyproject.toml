@@ -3,6 +3,8 @@ name = "te-net-examples"
 version = "0.0.0"
 requires-python = ">=3.11"
 dependencies = [
+    "pyyaml>=6.0.3",
+    "rich>=14.3.3",
     "te-net-lib",
 ]
 
@@ -20,4 +22,4 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.uv.sources]
-te-net-lib = { git = "https://github.com/yifen9/te-net-lib", rev = "f70c002" }
+te-net-lib = { git = "https://github.com/yifen9/te-net-lib", rev = "c46430b" }
