@@ -1,0 +1,30 @@
+name: publish_assets_qf_v1
+
+rules:
+  - src: pipeline/23_report_signal/*/figures/*.png
+    dst: figure/
+    rename: fig_sig_{i:02d}_{basename}
+
+  - src: pipeline/23_report_signal/*/figures/*.pdf
+    dst: figure/
+    rename: fig_sig_{i:02d}_{basename}
+    allow_missing: true
+
+  - src: pipeline/23_report_signal/*/report.csv
+    dst: table/
+    rename: table_signal_report_{basename}
+
+  - src: pipeline/20_report_compare/*/figures/*.png
+    dst: figure/
+    rename: fig_cmp_{i:02d}_{basename}
+    allow_missing: true
+
+  - src: pipeline/20_report_compare/*/report.csv
+    dst: table/
+    rename: table_compare_{basename}
+    allow_missing: true
+
+  - src: _meta.json
+    dst: meta/
+    rename: pack_meta.json
+    allow_missing: true

@@ -1,0 +1,14 @@
+name: 17_generate_rich_v1
+
+stability:
+  max_var_spectral_radius: 0.98
+  max_tries: 10
+
+output:
+  save_true_adj: true
+  save_trial_json: true
+  save_A: true
+  save_factors: true
+  save_loadings: true
+  save_sigma2: true
+  save_eps: true

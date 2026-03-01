@@ -19,11 +19,10 @@ from te_net_examples.utils.logger import Logger
 from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.progress import Progress
 from te_net_examples.utils.versioner import build_version_dir
-from te_net_lib.graph.edge_select import select_fixed_density
 
 
 @dataclass(frozen=True, slots=True)
-class Qf14GraphSelectOut:
+class Qf18OraclePreprocessOut:
     run_dir: str
     meta: dict[str, Any]
     summary_path: str
@@ -71,63 +70,20 @@ def _require_cols(df: pd.DataFrame, cols: list[str]) -> None:
         raise ValueError(f"missing required columns: {missing}")
 
 
-def _to_bool(x: Any, name: str) -> bool:
-    if isinstance(x, bool):
-        return bool(x)
-    s = str(x).strip().lower()
-    if s in ("1", "true", "t", "yes", "y"):
-        return True
-    if s in ("0", "false", "f", "no", "n"):
-        return False
-    raise ValueError(f"invalid bool for {name}: {x}")
-
-
-def _to_int(x: Any, name: str) -> int:
-    if isinstance(x, bool):
-        raise ValueError(f"invalid int for {name}: {x}")
-    if isinstance(x, (int, np.integer)):
-        return int(x)
-    if isinstance(x, (float, np.floating)):
-        if float(x).is_integer():
-            return int(x)
-        raise ValueError(f"invalid int for {name}: {x}")
-    s = str(x).strip()
-    if s == "" or s.lower() == "nan":
-        raise ValueError(f"invalid int for {name}: {x}")
-    try:
-        return int(s)
-    except Exception:
-        try:
-            f = float(s)
-            if f.is_integer():
-                return int(f)
-        except Exception:
-            pass
-    raise ValueError(f"invalid int for {name}: {x}")
-
-
-def _to_float(x: Any, name: str) -> float:
-    if isinstance(x, (int, float, np.floating, np.integer)):
-        return float(x)
-    s = str(x).strip()
-    if s == "" or s.lower() == "nan":
-        return float("nan")
-    try:
-        return float(s)
-    except Exception as e:
-        raise ValueError(f"invalid float for {name}: {x}") from e
+def _to_num(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(s, errors="coerce")
 
 
 def _trial_dir(run_dir: str, design_id: int) -> str:
     return os.path.join(run_dir, "trial", f"{int(design_id):08d}")
 
 
-def _read_beta(path: str) -> np.ndarray:
+def _read_mat(path: str, name: str) -> np.ndarray:
     x = np.load(path, allow_pickle=False)
     if not isinstance(x, np.ndarray):
-        raise ValueError(f"invalid beta array: {path}")
-    if x.ndim != 2 or x.shape[0] != x.shape[1]:
-        raise ValueError(f"beta must be square 2D: {path}")
+        raise ValueError(f"invalid array for {name}: {path}")
+    if x.ndim != 2:
+        raise ValueError(f"{name} must be 2D: {path}")
     return x.astype(np.float64, copy=False)
 
 
@@ -136,15 +92,38 @@ def _write_npy(path: str, arr: np.ndarray) -> None:
     np.save(path, arr)
 
 
-def _vc(df: pd.DataFrame, col: str) -> dict[str, int]:
-    if col not in df.columns:
-        return {}
-    s = df[col].astype(str)
-    m = s.value_counts(dropna=False).to_dict()
-    return {str(k): int(v) for k, v in m.items()}
+def _oracle_neutralize(
+    R: np.ndarray, F: np.ndarray, add_intercept: bool
+) -> tuple[np.ndarray, dict[str, Any]]:
+    T, N = R.shape
+    if F.shape[0] != T:
+        raise ValueError("factors and returns must have same T")
+    k = int(F.shape[1])
+    if add_intercept:
+        X = np.concatenate([np.ones((T, 1), dtype=np.float64), F], axis=1)
+    else:
+        X = F
+    coef, _, rank, _ = np.linalg.lstsq(X, R, rcond=None)
+    Rhat = X @ coef
+    resid = R - Rhat
+
+    sse = float(np.sum(resid * resid))
+    tss = float(np.sum((R - R.mean(axis=0, keepdims=True)) ** 2))
+    r2 = 1.0 - (sse / tss) if tss > 0.0 else 0.0
+
+    info = {
+        "T": int(T),
+        "N": int(N),
+        "k": int(k),
+        "add_intercept": bool(add_intercept),
+        "rank": int(rank),
+        "coef_shape": [int(coef.shape[0]), int(coef.shape[1])],
+        "r2_total": float(r2),
+    }
+    return resid.astype(np.float64, copy=False), info
 
 
-def run_qf_14_graph_select(
+def run_qf_18_oracle_preprocess(
     *,
     input_dir: str,
     output_root: str,
@@ -153,7 +132,7 @@ def run_qf_14_graph_select(
     script_path: str,
     component: str,
     design_filename: str,
-) -> Qf14GraphSelectOut:
+) -> Qf18OraclePreprocessOut:
     input_dir = _require_dir(input_dir)
     src_dir = _require_dir(src_dir)
     output_root_abs = os.path.abspath(output_root)
@@ -180,14 +159,30 @@ def run_qf_14_graph_select(
     if not isinstance(cfg, dict):
         raise ValueError("config must be a mapping")
 
+    input_cfg = cfg.get("input", {})
+    if input_cfg is None:
+        input_cfg = {}
+    if not isinstance(input_cfg, dict):
+        raise ValueError("config.input must be a mapping")
+
+    factors_required = bool(input_cfg.get("factors_required", True))
+
+    oracle_cfg = cfg.get("oracle", {})
+    if oracle_cfg is None:
+        oracle_cfg = {}
+    if not isinstance(oracle_cfg, dict):
+        raise ValueError("config.oracle must be a mapping")
+
+    add_intercept = bool(oracle_cfg.get("add_intercept", True))
+
     output_cfg = cfg.get("output", {})
     if output_cfg is None:
         output_cfg = {}
     if not isinstance(output_cfg, dict):
         raise ValueError("config.output must be a mapping")
 
-    save_adj = bool(output_cfg.get("save_adj", True))
-    save_select_json = bool(output_cfg.get("save_select_json", True))
+    save_returns = bool(output_cfg.get("save_returns_oracle_neutral", True))
+    save_oracle_json = bool(output_cfg.get("save_oracle_json", True))
 
     params: dict[str, Any] = {
         "input_dir": os.path.abspath(input_dir),
@@ -196,9 +191,10 @@ def run_qf_14_graph_select(
         "component": component,
         "design_path": os.path.abspath(design_in),
         "meta_in": os.path.abspath(meta_in),
-        "save_adj": bool(save_adj),
-        "save_select_json": bool(save_select_json),
-        "schema_version": 3,
+        "factors_required": bool(factors_required),
+        "add_intercept": bool(add_intercept),
+        "save_returns_oracle_neutral": bool(save_returns),
+        "save_oracle_json": bool(save_oracle_json),
     }
 
     meta = build_meta(
@@ -223,108 +219,105 @@ def run_qf_14_graph_select(
 
         df = _df_from_csv(design_in)
         df = df.rename(columns={c: c.strip() for c in df.columns})
-
-        need = ["design_id", "sel_name", "sel_density", "sel_mode", "sel_exclude_self"]
-        _require_cols(df, need)
+        _require_cols(df, ["design_id", "dgp"])
+        df["design_id"] = _to_num(df["design_id"])
+        df["dgp"] = df["dgp"].astype(str)
 
         records = df.to_dict(orient="records")
-        p = Progress(logger=logger, name="qf/14_graph_select", total=int(len(records)))
+        p = Progress(
+            logger=logger, name="qf/18_oracle_preprocess", total=int(len(records))
+        )
         p.start()
 
         items: list[dict[str, Any]] = []
-        n_fixed_density = 0
+        n_ok = 0
+        n_skip = 0
 
         for r in records:
-            design_id = _to_int(r["design_id"], "design_id")
-            sel_name = str(r["sel_name"]).strip()
-            density = _to_float(r["sel_density"], "sel_density")
-            mode = str(r.get("sel_mode", "abs")).strip()
-            exclude_self = _to_bool(r.get("sel_exclude_self", True), "sel_exclude_self")
+            did = int(float(r["design_id"]))
+            in_trial = _trial_dir(input_dir, did)
+            ret_in = os.path.join(in_trial, "returns.npy")
+            fac_in = os.path.join(in_trial, "factors.npy")
 
-            in_dir = _trial_dir(input_dir, design_id)
-            beta_in = _require_file(os.path.join(in_dir, "beta.npy"))
-            beta = _read_beta(beta_in)
+            dgp = str(r.get("dgp", "")).strip()
+            is_factor_dgp = dgp in ("garch_factor",)
+            has_f = os.path.isfile(fac_in)
 
-            out_dir = _trial_dir(run_dir, design_id)
-            _ensure_dir(out_dir)
+            if (not has_f) and bool(factors_required) and bool(is_factor_dgp):
+                raise FileNotFoundError(fac_in)
 
-            adj_path = None
-            sel_json_path = None
-
-            if sel_name == "fixed_density":
-                out = select_fixed_density(
-                    scores=beta,
-                    density=float(density),
-                    exclude_self=bool(exclude_self),
-                    mode=str(mode),
-                    return_info=True,
+            if not has_f:
+                n_skip += 1
+                items.append(
+                    {
+                        "design_id": int(did),
+                        "skipped": True,
+                        "reason": "missing_factors",
+                        "dgp": dgp,
+                        "input_returns": ret_in if os.path.isfile(ret_in) else None,
+                        "input_factors": None,
+                        "output_returns": None,
+                        "oracle_json": None,
+                    }
                 )
-                adj = out[0]
-                info = out[1]
-                n_fixed_density += 1
-            else:
-                raise ValueError(f"unsupported sel_name: {sel_name}")
+                p.step(1)
+                continue
 
-            if save_adj:
-                adj_path = os.path.join(out_dir, "adj_hat.npy")
-                _write_npy(adj_path, adj.astype(np.int8, copy=False))
+            R = _read_mat(_require_file(ret_in), "returns")
+            F = _read_mat(_require_file(fac_in), "factors")
 
-            if save_select_json:
-                sel = {
-                    "schema_version": 3,
-                    "design_id": int(design_id),
-                    "selector": {
-                        "name": sel_name,
-                        "mode": str(info.get("mode", mode)),
-                        "exclude_self": bool(info.get("exclude_self", exclude_self)),
-                    },
-                    "target": {
-                        "density": float(info.get("density_target", float(density))),
-                        "k_target": int(info.get("k_target", -1)),
-                    },
-                    "selected": {
-                        "density": float(info.get("density_real", float("nan"))),
-                        "k_selected": int(info.get("k_selected", int(adj.sum()))),
-                    },
-                    "inputs": {"beta": beta_in},
-                    "outputs": {"adj_hat": adj_path},
+            resid, info = _oracle_neutralize(R, F, bool(add_intercept))
+
+            out_trial = _trial_dir(run_dir, did)
+            _ensure_dir(out_trial)
+
+            out_ret = None
+            if save_returns:
+                out_ret = os.path.join(out_trial, "returns_oracle_neutral.npy")
+                _write_npy(out_ret, resid)
+
+            out_json = None
+            if save_oracle_json:
+                obj = {
+                    "design_id": int(did),
+                    "input": {"returns": ret_in, "factors": fac_in},
+                    "output": {"returns_oracle_neutral": out_ret},
+                    "oracle": info,
                 }
-                sel_json_path = os.path.join(out_dir, "graph_select.json")
-                write_json(sel_json_path, sel)
+                out_json = os.path.join(out_trial, "oracle.json")
+                write_json(out_json, obj)
 
             items.append(
                 {
-                    "design_id": int(design_id),
-                    "sel_name": sel_name,
-                    "density": float(density),
-                    "mode": mode,
-                    "exclude_self": bool(exclude_self),
-                    "beta": beta_in,
-                    "adj_hat": adj_path,
-                    "graph_select_json": sel_json_path,
+                    "design_id": int(did),
+                    "skipped": False,
+                    "input_returns": ret_in,
+                    "input_factors": fac_in,
+                    "output_returns": out_ret,
+                    "oracle_json": out_json,
                 }
             )
-
+            n_ok += 1
             p.step(1)
 
         p.finish()
 
-        summ = {
-            "schema_version": 3,
+        summary = {
             "n_rows": int(len(records)),
-            "n_fixed_density": int(n_fixed_density),
-            "by_sel": _vc(df, "sel_name"),
-            "by_density": _vc(df, "sel_density"),
+            "n_ok": int(n_ok),
+            "n_skip": int(n_skip),
             "trial_root": os.path.join(run_dir, "trial"),
             "items": items[:2000],
         }
 
         summary_out = os.path.join(run_dir, "summary.json")
-        write_json(summary_out, summ)
+        write_json(summary_out, summary)
         logger.info(jline("output", component, "summary", path=summary_out))
 
         audit.finish_success()
-        return Qf14GraphSelectOut(run_dir=run_dir, meta=meta, summary_path=summary_out)
+        return Qf18OraclePreprocessOut(
+            run_dir=run_dir, meta=meta, summary_path=summary_out
+        )
     except BaseException as e:
         audit.finish_error(e)
         raise

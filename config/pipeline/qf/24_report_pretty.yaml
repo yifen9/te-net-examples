@@ -1,0 +1,27 @@
+name: 24_report_pretty_v1
+
+groupby:
+  row_key: dgp
+  col_key_a: sel_density
+  col_key_b: fn_n_components
+  hue_key: te_name
+  x_key: T_N
+
+metrics:
+  cols:
+    - density_pred
+    - f1
+    - precision
+    - recall
+    - hub_rec_nio
+
+filters:
+  dropna_metrics: true
+
+output:
+  save_report_csv: true
+  save_figures: true
+  dpi: 200
+  band_k: 1.0
+  cell_w: 4.5
+  cell_h: 3.0

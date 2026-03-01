@@ -1,0 +1,15 @@
+name: 23_report_signal_v1
+
+groupby:
+  keys:
+    - dgp
+    - te_name
+    - sel_density
+    - fn_n_components
+    - N
+    - T
+
+output:
+  save_report_csv: true
+  save_specs_json: true
+  save_figures: true

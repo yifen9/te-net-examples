@@ -1,0 +1,8 @@
+name: 22_cs_tstat_v1
+
+tstat:
+  add_intercept: true
+
+output:
+  save_tstat_csv: true
+  save_delta_csv: true

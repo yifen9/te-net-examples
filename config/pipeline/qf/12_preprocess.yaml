@@ -1,8 +1,11 @@
 name: 12_preprocess_v1
 
+preprocess:
+  kind: svd_regress
+  regress:
+    add_intercept: true
 output:
   save_returns_neutral: true
   save_svd_json: true
   save_factors: false
   save_components: false
-  

@@ -8,5 +8,6 @@ __pycache__
 target
 
 /data/pipeline
+out
 /site
 /.env.dev

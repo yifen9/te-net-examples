@@ -1,0 +1,11 @@
+name: 18_oracle_preprocess_v1
+
+input:
+  factors_required: true
+
+oracle:
+  add_intercept: true
+
+output:
+  save_returns_oracle_neutral: true
+  save_oracle_json: true

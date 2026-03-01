@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from te_net_examples.io.csv import read_csv, write_csv
-from te_net_examples.io.json import read_json, write_json
+from te_net_examples.io.json import write_json
 from te_net_examples.io.yaml import read_yaml
 from te_net_examples.utils.audit import Audit
 from te_net_examples.utils.console import ConsoleSink
@@ -26,7 +26,7 @@ from te_net_examples.utils.versioner import build_version_dir
 
 
 @dataclass(frozen=True, slots=True)
-class Qf16ReportFiguresOut:
+class Qf20ReportCompareOut:
     run_dir: str
     meta: dict[str, Any]
     report_path: str | None
@@ -88,64 +88,54 @@ def _require_cols(df: pd.DataFrame, cols: list[str]) -> None:
         raise ValueError(f"missing required columns: {missing}")
 
 
-def _fmt_num(x: float) -> str:
-    if x != x:
-        return "---"
-    return f"{x:.4f}"
-
-
 def _write_text(path: str, txt: str) -> None:
     _ensure_dir(os.path.dirname(path))
     with open(path, "w", encoding="utf-8") as f:
         f.write(txt)
 
 
-def _latex_table_report(df: pd.DataFrame, keys: list[str], cols: list[str]) -> str:
-    keep = keys + ["n"] + [f"{c}_mean" for c in cols] + [f"{c}_std" for c in cols]
+def _latex_report(df: pd.DataFrame, keys: list[str], cols: list[str]) -> str:
+    keep = (
+        keys
+        + ["subset", "n"]
+        + [f"{c}_mean" for c in cols]
+        + [f"{c}_std" for c in cols]
+    )
     x = df[keep].copy()
 
     lines: list[str] = []
-    colspec = "l" * len(keys) + "r" * (1 + 2 * len(cols))
+    colspec = "l" * (len(keys) + 1) + "r" * (1 + 2 * len(cols))
     lines.append(r"\begin{tabular}{" + colspec + r"}")
     lines.append(r"\toprule")
-    head = keys + ["n"]
+    head = keys + ["subset", "n"]
     for c in cols:
         head.append(f"{c} mean")
         head.append(f"{c} std")
     lines.append(" & ".join(head) + r" \\")
     lines.append(r"\midrule")
-
     for _, r in x.iterrows():
         row: list[str] = []
         for k in keys:
             row.append(str(r[k]))
+        row.append(str(r["subset"]))
         row.append(str(int(r["n"])))
         for c in cols:
             m = r[f"{c}_mean"]
             s = r[f"{c}_std"]
-            row.append(_fmt_num(float(m)) if m == m else "---")
-            row.append(_fmt_num(float(s)) if s == s else "---")
+            row.append(f"{float(m):.4f}" if m == m else "---")
+            row.append(f"{float(s):.4f}" if s == s else "---")
         lines.append(" & ".join(row) + r" \\")
     lines.append(r"\bottomrule")
     lines.append(r"\end{tabular}")
     return "\n".join(lines)
 
 
-def _fig_bar_by_density(df: pd.DataFrame, metric: str, out_path: str) -> dict[str, Any]:
+def _fig_bar_by_density(
+    df: pd.DataFrame, metric: str, out_path: str, title: str
+) -> dict[str, Any]:
     x = df.copy()
-    x["sel_density"] = (
-        x["sel_density"].astype(str) if "sel_density" in x.columns else ""
-    )
-    x = (
-        x.sort_values(["sel_density"], ascending=[True])
-        if "sel_density" in x.columns
-        else x
-    )
-
-    if "sel_density" not in x.columns or metric not in x.columns:
-        return {"path": out_path, "metric": metric, "densities": [], "n": []}
-
-    g = x.groupby("sel_density", sort=True, dropna=False)
+    x["sel_density"] = x["sel_density"].astype(str)
+    g = x.groupby("sel_density", sort=True)
     dens = g.size().index.tolist()
     y = g[metric].mean().astype(float).to_numpy()
     n = g.size().astype(int).to_numpy()
@@ -155,9 +145,9 @@ def _fig_bar_by_density(df: pd.DataFrame, metric: str, out_path: str) -> dict[st
     xs = np.arange(len(dens))
     ax.bar(xs, y)
     ax.set_xticks(xs)
-    ax.set_xticklabels([str(d) for d in dens], rotation=0)
+    ax.set_xticklabels(dens)
     ax.set_ylabel(metric)
-    ax.set_title(f"{metric} by selection density")
+    ax.set_title(title)
     for i, (yy, nn) in enumerate(zip(y, n)):
         if yy == yy:
             ax.text(i, yy, f"n={int(nn)}", ha="center", va="bottom", fontsize=9)
@@ -166,46 +156,10 @@ def _fig_bar_by_density(df: pd.DataFrame, metric: str, out_path: str) -> dict[st
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
 
-    return {
-        "path": out_path,
-        "metric": metric,
-        "densities": [str(d) for d in dens],
-        "n": n.tolist(),
-    }
+    return {"path": out_path, "densities": dens, "n": n.tolist()}
 
 
-def _fig_precision_recall_scatter(
-    df: pd.DataFrame, out_path: str, max_points: int
-) -> dict[str, Any]:
-    if "precision" not in df.columns or "recall" not in df.columns:
-        return {"path": out_path, "n_points": 0, "max_points": int(max_points)}
-
-    x = df.copy()
-    x["precision"] = _to_num(x["precision"])
-    x["recall"] = _to_num(x["recall"])
-    x = x[np.isfinite(x["precision"]) & np.isfinite(x["recall"])]
-
-    if len(x) > int(max_points):
-        x = x.sample(n=int(max_points), random_state=0)
-
-    fig = plt.figure(figsize=(5, 5))
-    ax = fig.add_subplot(111)
-    ax.scatter(
-        x["precision"].to_numpy(dtype=float), x["recall"].to_numpy(dtype=float), s=10
-    )
-    ax.set_xlabel("precision")
-    ax.set_ylabel("recall")
-    ax.set_title("precision vs recall (sampled)")
-    ax.set_xlim(0.0, 1.0)
-    ax.set_ylim(0.0, 1.0)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=200)
-    plt.close(fig)
-
-    return {"path": out_path, "n_points": int(len(x)), "max_points": int(max_points)}
-
-
-def run_qf_16_report_figures(
+def run_qf_20_report_compare(
     *,
     input_dir: str,
     output_root: str,
@@ -213,9 +167,8 @@ def run_qf_16_report_figures(
     config_path: str,
     script_path: str,
     component: str,
-    design_filename: str,
-    metrics_filename: str,
-) -> Qf16ReportFiguresOut:
+    compare_filename: str,
+) -> Qf20ReportCompareOut:
     input_dir = _require_dir(input_dir)
     src_dir = _require_dir(src_dir)
     output_root_abs = os.path.abspath(output_root)
@@ -223,19 +176,7 @@ def run_qf_16_report_figures(
     cfg_path = _require_file(os.path.abspath(config_path))
     script_path_abs = _require_file(os.path.abspath(script_path))
 
-    meta_in = _require_file(os.path.join(input_dir, "_meta.json"))
-    meta_up = read_json(meta_in)
-    if not isinstance(meta_up, dict):
-        raise ValueError("upstream _meta.json must be a mapping")
-    params_up = meta_up.get("params", None)
-    if not isinstance(params_up, dict):
-        raise ValueError("upstream _meta.json missing params mapping")
-    design_path = params_up.get("design_path", None)
-    if design_path is None:
-        design_path = os.path.join(input_dir, design_filename)
-    design_in = _require_file(str(design_path))
-
-    metrics_in = _require_file(os.path.join(input_dir, metrics_filename))
+    compare_in = _require_file(os.path.join(input_dir, compare_filename))
 
     repo_root = _repo_root_from_path(Path(script_path_abs))
     env_path = _require_file(str(repo_root / "uv.lock"))
@@ -254,41 +195,38 @@ def run_qf_16_report_figures(
         raise ValueError("groupby.keys must be a non-empty list")
     keys = [str(k) for k in keys]
 
-    metrics_cfg = cfg.get("metrics", {})
-    if metrics_cfg is None:
-        metrics_cfg = {}
-    if not isinstance(metrics_cfg, dict):
-        raise ValueError("config.metrics must be a mapping")
-    cols = metrics_cfg.get("cols", [])
-    if not isinstance(cols, list) or not cols:
-        raise ValueError("metrics.cols must be a non-empty list")
-    cols = [str(c) for c in cols]
+    filt_cfg = cfg.get("filters", {})
+    if filt_cfg is None:
+        filt_cfg = {}
+    if not isinstance(filt_cfg, dict):
+        raise ValueError("config.filters must be a mapping")
+    has_true_adj_only = bool(filt_cfg.get("has_true_adj_only", True))
+    oracle_status_list = filt_cfg.get("oracle_status", ["ok", "missing"])
+    if not isinstance(oracle_status_list, list) or not oracle_status_list:
+        raise ValueError("filters.oracle_status must be a non-empty list")
+    oracle_status_list = [str(x) for x in oracle_status_list]
 
-    output_cfg = cfg.get("output", {})
-    if output_cfg is None:
-        output_cfg = {}
-    if not isinstance(output_cfg, dict):
+    out_cfg = cfg.get("output", {})
+    if out_cfg is None:
+        out_cfg = {}
+    if not isinstance(out_cfg, dict):
         raise ValueError("config.output must be a mapping")
-
-    save_report_csv = bool(output_cfg.get("save_report_csv", True))
-    save_specs_json = bool(output_cfg.get("save_specs_json", True))
-    save_figures = bool(output_cfg.get("save_figures", True))
-    max_points_scatter = int(output_cfg.get("max_points_scatter", 5000))
+    save_report_csv = bool(out_cfg.get("save_report_csv", True))
+    save_specs_json = bool(out_cfg.get("save_specs_json", True))
+    save_figures = bool(out_cfg.get("save_figures", True))
 
     params: dict[str, Any] = {
         "input_dir": os.path.abspath(input_dir),
         "output_root": output_root_abs,
         "config_path": cfg_path,
         "component": component,
-        "design_path": os.path.abspath(design_in),
-        "metrics_path": os.path.abspath(metrics_in),
-        "meta_in": os.path.abspath(meta_in),
+        "compare_path": os.path.abspath(compare_in),
         "groupby_keys": keys,
-        "metric_cols": cols,
+        "has_true_adj_only": bool(has_true_adj_only),
+        "oracle_status": oracle_status_list,
         "save_report_csv": bool(save_report_csv),
         "save_specs_json": bool(save_specs_json),
         "save_figures": bool(save_figures),
-        "max_points_scatter": int(max_points_scatter),
     }
 
     meta = build_meta(
@@ -301,9 +239,7 @@ def run_qf_16_report_figures(
 
     try:
         logger.info(jline("stage", component, "start", run_dir=run_dir))
-        logger.info(jline("input", component, "input_dir", path=input_dir))
-        logger.info(jline("input", component, "design", path=design_in))
-        logger.info(jline("input", component, "metrics", path=metrics_in))
+        logger.info(jline("input", component, "compare", path=compare_in))
         logger.info(jline("input", component, "config", path=cfg_path))
 
         cfg_dir = os.path.join(run_dir, "cfg")
@@ -312,62 +248,73 @@ def run_qf_16_report_figures(
         shutil.copy2(cfg_path, cfg_copied)
         logger.info(jline("output", component, "config_copied", path=cfg_copied))
 
-        df_design = _df_from_csv(design_in).rename(
-            columns={c: c.strip() for c in _df_from_csv(design_in).columns}
-        )
-        df_design = _df_from_csv(design_in)
-        df_design = df_design.rename(columns={c: c.strip() for c in df_design.columns})
+        df = _df_from_csv(compare_in)
+        df = df.rename(columns={c: c.strip() for c in df.columns})
+        need = ["design_id", "dgp", "te_name", "sel_density", "oracle_status"]
+        _require_cols(df, need)
 
-        df_metrics = _df_from_csv(metrics_in)
-        df_metrics = df_metrics.rename(
-            columns={c: c.strip() for c in df_metrics.columns}
-        )
+        for c in [
+            "est_precision",
+            "est_recall",
+            "est_f1",
+            "est_hub_rec",
+            "ora_precision",
+            "ora_recall",
+            "ora_f1",
+            "ora_hub_rec",
+        ]:
+            if c in df.columns:
+                df[c] = _to_num(df[c])
 
-        _require_cols(df_design, ["design_id"])
-        _require_cols(df_metrics, ["design_id"])
+        df["has_true_adj"] = df["est_f1"].notna()
+        df["sel_density"] = df["sel_density"].astype(str)
+        df["oracle_status"] = df["oracle_status"].astype(str)
 
-        d = df_design.copy()
-        m = df_metrics.copy()
-
-        d["design_id"] = _to_num(d["design_id"])
-        m["design_id"] = _to_num(m["design_id"])
-
-        dd = d.merge(m, on="design_id", how="left", suffixes=("", "_m"))
-
-        for c in cols:
-            if c in dd.columns:
-                dd[c] = _to_num(dd[c])
-            else:
-                dd[c] = np.nan
-
-        for k in keys:
-            if k not in dd.columns:
-                dd[k] = ""
-            dd[k] = dd[k].astype(str)
-
-        p = Progress(logger=logger, name="qf/16_report_figures", total=3)
+        p = Progress(logger=logger, name="qf/20_report_compare", total=3)
         p.start()
 
-        g = dd.groupby(keys, dropna=False, sort=True)
+        df0 = df[df["oracle_status"].isin(oracle_status_list)].copy()
+
+        blocks: list[tuple[str, pd.DataFrame, list[str]]] = []
+
+        df_var = (
+            df0[df0["has_true_adj"]].copy() if bool(has_true_adj_only) else df0.copy()
+        )
+        cols_var = ["est_precision", "est_recall", "est_f1", "est_hub_rec"]
+        blocks.append(("estimated_has_true_adj", df_var, cols_var))
+
+        df_oracle = df0[df0["oracle_status"] == "ok"].copy()
+        cols_oracle = ["ora_precision", "ora_recall", "ora_f1", "ora_hub_rec"]
+        blocks.append(("oracle_ok", df_oracle, cols_oracle))
+
         rows: list[dict[str, Any]] = []
-        for name, sub in g:
-            row: dict[str, Any] = {}
-            if len(keys) == 1:
-                row[keys[0]] = str(name)
-            else:
-                for i, k in enumerate(keys):
-                    row[k] = str(name[i])
-            row["n"] = int(len(sub))
-            for c in cols:
-                v = sub[c].to_numpy(dtype=float)
-                v = v[np.isfinite(v)]
-                row[f"{c}_mean"] = float(v.mean()) if v.size else float("nan")
-                row[f"{c}_std"] = float(v.std(ddof=1)) if v.size >= 2 else float("nan")
-            rows.append(row)
+        for subset, sub, cols in blocks:
+            x = sub.copy()
+            for k in keys:
+                if k not in x.columns:
+                    x[k] = ""
+            g = x.groupby(keys, dropna=False, sort=True)
+            for name, gg in g:
+                row: dict[str, Any] = {}
+                if len(keys) == 1:
+                    row[keys[0]] = name
+                else:
+                    for i, k in enumerate(keys):
+                        row[k] = name[i]
+                row["subset"] = subset
+                row["n"] = int(len(gg))
+                for c in cols:
+                    v = gg[c].to_numpy(dtype=float)
+                    v = v[np.isfinite(v)]
+                    row[f"{c}_mean"] = float(v.mean()) if v.size else float("nan")
+                    row[f"{c}_std"] = (
+                        float(v.std(ddof=1)) if v.size >= 2 else float("nan")
+                    )
+                rows.append(row)
 
         report_df = pd.DataFrame(rows)
         report_df = report_df.sort_values(
-            keys, ascending=[True] * len(keys)
+            keys + ["subset"], ascending=[True] * len(keys) + [True]
         ).reset_index(drop=True)
 
         report_path = None
@@ -382,14 +329,23 @@ def run_qf_16_report_figures(
 
         specs_path = None
         if save_specs_json:
-            tex = _latex_table_report(report_df, keys, cols)
+            cols_all = [
+                "est_precision",
+                "est_recall",
+                "est_f1",
+                "est_hub_rec",
+                "ora_precision",
+                "ora_recall",
+                "ora_f1",
+                "ora_hub_rec",
+            ]
+            tex = _latex_report(report_df, keys, cols_all)
             tex_path = os.path.join(run_dir, "report.tex")
             _write_text(tex_path, tex + "\n")
             specs = {
-                "groupby_keys": keys,
-                "metric_cols": cols,
                 "report_tex": tex,
                 "report_tex_path": tex_path,
+                "groupby_keys": keys,
             }
             specs_path = os.path.join(run_dir, "specs.json")
             write_json(specs_path, specs)
@@ -402,18 +358,34 @@ def run_qf_16_report_figures(
             fig_dir = os.path.join(run_dir, "figures")
             _ensure_dir(fig_dir)
 
-            if "f1" in dd.columns:
-                f1_path = os.path.join(fig_dir, "f1_vs_density.png")
-                figs["f1_vs_density"] = _fig_bar_by_density(dd, "f1", f1_path)
-            if "hub_rec_nio" in dd.columns:
-                hr_path = os.path.join(fig_dir, "hubrec_vs_density.png")
-                figs["hubrec_vs_density"] = _fig_bar_by_density(
-                    dd, "hub_rec_nio", hr_path
+            if (
+                bool(has_true_adj_only)
+                and "est_f1" in df_var.columns
+                and df_var["est_f1"].notna().any()
+            ):
+                figs["f1_est_vs_density"] = _fig_bar_by_density(
+                    df_var,
+                    "est_f1",
+                    os.path.join(fig_dir, "f1_est_vs_density.png"),
+                    "Estimated F1 by density (has true_adj)",
                 )
-            if "precision" in dd.columns and "recall" in dd.columns:
-                pr_path = os.path.join(fig_dir, "precision_recall_scatter.png")
-                figs["precision_recall_scatter"] = _fig_precision_recall_scatter(
-                    dd, pr_path, int(max_points_scatter)
+            if (
+                bool(has_true_adj_only)
+                and "est_hub_rec" in df_var.columns
+                and df_var["est_hub_rec"].notna().any()
+            ):
+                figs["hubrec_est_vs_density"] = _fig_bar_by_density(
+                    df_var,
+                    "est_hub_rec",
+                    os.path.join(fig_dir, "hubrec_est_vs_density.png"),
+                    "Estimated hub recovery by density (has true_adj)",
+                )
+            if "ora_f1" in df_oracle.columns and df_oracle["ora_f1"].notna().any():
+                figs["f1_oracle_vs_density"] = _fig_bar_by_density(
+                    df_oracle,
+                    "ora_f1",
+                    os.path.join(fig_dir, "f1_oracle_vs_density.png"),
+                    "Oracle F1 by density (oracle ok)",
                 )
 
             for k, v in figs.items():
@@ -425,29 +397,13 @@ def run_qf_16_report_figures(
         p.step(1)
         p.finish()
 
-        n_design = int(len(d))
-        n_metrics = (
-            int(m["design_id"].notna().sum())
-            if "design_id" in m.columns
-            else int(len(m))
-        )
-        n_joined = int(dd["design_id"].notna().sum())
-        n_has_any_metric = int(dd[cols].notna().any(axis=1).sum()) if cols else 0
-
         summary = {
-            "inputs": {
-                "input_dir": os.path.abspath(input_dir),
-                "design": os.path.abspath(design_in),
-                "metrics": os.path.abspath(metrics_in),
-            },
+            "inputs": {"compare": os.path.abspath(compare_in)},
             "groupby_keys": keys,
-            "metric_cols": cols,
-            "join": {
-                "n_design": n_design,
-                "n_metrics": n_metrics,
-                "n_joined": n_joined,
-                "n_has_any_metric": n_has_any_metric,
-            },
+            "n_rows": int(len(df)),
+            "n_rows_filtered": int(len(df0)),
+            "n_rows_has_true_adj": int(df0["has_true_adj"].sum()),
+            "n_rows_oracle_ok": int((df0["oracle_status"] == "ok").sum()),
             "outputs": {
                 "report_csv": report_path,
                 "specs_json": specs_path,
@@ -460,7 +416,7 @@ def run_qf_16_report_figures(
         logger.info(jline("output", component, "summary", path=summary_out))
 
         audit.finish_success()
-        return Qf16ReportFiguresOut(
+        return Qf20ReportCompareOut(
             run_dir=run_dir,
             meta=meta,
             report_path=report_path,

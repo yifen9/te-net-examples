@@ -1,0 +1,282 @@
+name: 80_paper_artifacts_v1
+
+tables:
+  - name: table_metrics_raw
+    source:
+      stage: metrics
+      kind: csv
+      path: metrics.csv
+    save_tex: true
+    format:
+      escape: true
+      na_rep: ""
+      float_format: "{:.6f}"
+
+  - name: table_report_figures
+    source:
+      stage: report_figures
+      kind: csv
+      path: report.csv
+    save_tex: true
+    format:
+      escape: true
+      na_rep: ""
+      float_format: "{:.6f}"
+
+  - name: table_cs_tstat
+    source:
+      stage: cs_tstat
+      kind: csv
+      path: tstat.csv
+    save_tex: true
+    format:
+      escape: true
+      na_rep: ""
+      float_format: "{:.4f}"
+
+  - name: table_cs_delta
+    source:
+      stage: cs_tstat
+      kind: csv
+      path: delta.csv
+    save_tex: true
+    format:
+      escape: true
+      na_rep: ""
+      float_format: "{:.4f}"
+
+  - name: table_signal_report
+    source:
+      stage: report_signal
+      kind: csv
+      path: report.csv
+    save_tex: true
+    format:
+      escape: true
+      na_rep: ""
+      float_format: "{:.4f}"
+
+figures:
+  - name: fig_precision_mean_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: report_figures
+      kind: csv
+      path: report.csv
+    x: sel_density
+    y: precision_mean
+    agg: mean
+    title: "Precision (mean) by selection density"
+    xlabel: "Selection density"
+    ylabel: "Precision (mean)"
+    figsize: [8, 4]
+    dpi: 220
+    ylim: [0.0, 1.0]
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+
+  - name: fig_recall_mean_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: report_figures
+      kind: csv
+      path: report.csv
+    x: sel_density
+    y: recall_mean
+    agg: mean
+    title: "Recall (mean) by selection density"
+    xlabel: "Selection density"
+    ylabel: "Recall (mean)"
+    figsize: [8, 4]
+    dpi: 220
+    ylim: [0.0, 1.0]
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+
+  - name: fig_f1_mean_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: report_figures
+      kind: csv
+      path: report.csv
+    x: sel_density
+    y: f1_mean
+    agg: mean
+    title: "F1 (mean) by selection density"
+    xlabel: "Selection density"
+    ylabel: "F1 (mean)"
+    figsize: [8, 4]
+    dpi: 220
+    ylim: [0.0, 1.0]
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+
+  - name: fig_hubrec_mean_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: report_figures
+      kind: csv
+      path: report.csv
+    x: sel_density
+    y: hub_rec_nio_mean
+    agg: mean
+    title: "Hub recovery (NIO, mean) by selection density"
+    xlabel: "Selection density"
+    ylabel: "Hub recovery (mean)"
+    figsize: [8, 4]
+    dpi: 220
+    ylim: [0.0, 1.0]
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+
+  - name: fig_density_pred_mean_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: report_figures
+      kind: csv
+      path: report.csv
+    x: sel_density
+    y: density_pred_mean
+    agg: mean
+    title: "Predicted density (mean) by selection density"
+    xlabel: "Selection density"
+    ylabel: "Density (mean)"
+    figsize: [8, 4]
+    dpi: 220
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+
+  - name: fig_tstat_estimated_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: cs_tstat
+      kind: csv
+      path: tstat.csv
+    filters:
+      - col: branch
+        op: eq
+        value: estimated
+    x: sel_density
+    y: tstat
+    agg: mean
+    title: "Estimated signal t-stat by selection density"
+    xlabel: "Selection density"
+    ylabel: "t-stat"
+    figsize: [8, 4]
+    dpi: 220
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+      - y: 1.96
+        linestyle: "--"
+        linewidth: 1.0
+      - y: -1.96
+        linestyle: "--"
+        linewidth: 1.0
+
+  - name: fig_tstat_oracle_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: cs_tstat
+      kind: csv
+      path: tstat.csv
+    filters:
+      - col: branch
+        op: eq
+        value: oracle
+    x: sel_density
+    y: tstat
+    agg: mean
+    title: "Oracle signal t-stat by selection density"
+    xlabel: "Selection density"
+    ylabel: "t-stat"
+    figsize: [8, 4]
+    dpi: 220
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+      - y: 1.96
+        linestyle: "--"
+        linewidth: 1.0
+      - y: -1.96
+        linestyle: "--"
+        linewidth: 1.0
+
+  - name: fig_report_signal_estimated_mean_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: report_signal
+      kind: csv
+      path: report.csv
+    filters:
+      - col: subset
+        op: eq
+        value: tstat_estimated
+    x: sel_density
+    y: tstat_mean
+    agg: mean
+    title: "Estimated t-stat mean by selection density (report)"
+    xlabel: "Selection density"
+    ylabel: "t-stat mean"
+    figsize: [8, 4]
+    dpi: 220
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+      - y: 1.96
+        linestyle: "--"
+        linewidth: 1.0
+      - y: -1.96
+        linestyle: "--"
+        linewidth: 1.0
+
+  - name: fig_report_signal_oracle_mean_vs_density
+    kind: bar
+    ext: png
+    source:
+      stage: report_signal
+      kind: csv
+      path: report.csv
+    filters:
+      - col: subset
+        op: eq
+        value: tstat_oracle
+    x: sel_density
+    y: tstat_mean
+    agg: mean
+    title: "Oracle t-stat mean by selection density (report)"
+    xlabel: "Selection density"
+    ylabel: "t-stat mean"
+    figsize: [8, 4]
+    dpi: 220
+    hlines:
+      - y: 0
+        linestyle: "-"
+        linewidth: 1.0
+      - y: 1.96
+        linestyle: "--"
+        linewidth: 1.0
+      - y: -1.96
+        linestyle: "--"
+        linewidth: 1.0

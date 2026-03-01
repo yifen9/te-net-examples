@@ -11,6 +11,7 @@ from te_net_examples.io.csv import read_csv
 from te_net_examples.io.json import write_json
 from te_net_examples.utils.audit import Audit
 from te_net_examples.utils.console import ConsoleSink
+from te_net_examples.utils.jlog import jline
 from te_net_examples.utils.logger import Logger
 from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.versioner import build_version_dir
@@ -187,16 +188,9 @@ def run_qf_08_specs(
     logger = Logger(sinks=[ConsoleSink(), audit])
 
     try:
-        logger.info(
-            f'{{"event":"stage","component":"{component}","msg":"start","run_dir":"{run_dir}"}}'
-        )
-        logger.info(
-            f'{{"event":"input","component":"{component}","msg":"report","path":"{report_in}"}}'
-        )
+        logger.info(jline("stage", component, "start", run_dir=run_dir))
+        logger.info(jline("input", component, "report", path=report_in))
 
-        df = _df_from_csv(report_in).rename(
-            columns={c: c.strip() for c in _df_from_csv(report_in).columns}
-        )
         df = _df_from_csv(report_in)
         df = df.rename(columns={c: c.strip() for c in df.columns})
 
@@ -208,22 +202,15 @@ def run_qf_08_specs(
         _write_text(portfolio_sort_path, portfolio_sort_tex + "\n")
         _write_text(cs_path, cs_tex + "\n")
 
-        specs = {
-            "portfolio_sort_ls_tex": portfolio_sort_tex,
-            "cs_ols_tex": cs_tex,
-        }
+        specs = {"portfolio_sort_ls_tex": portfolio_sort_tex, "cs_ols_tex": cs_tex}
         specs_out = os.path.join(run_dir, "specs.json")
         write_json(specs_out, specs)
 
         logger.info(
-            f'{{"event":"output","component":"{component}","msg":"portfolio_sort_tex","path":"{portfolio_sort_path}"}}'
+            jline("output", component, "portfolio_sort_tex", path=portfolio_sort_path)
         )
-        logger.info(
-            f'{{"event":"output","component":"{component}","msg":"cs_tex","path":"{cs_path}"}}'
-        )
-        logger.info(
-            f'{{"event":"output","component":"{component}","msg":"specs","path":"{specs_out}"}}'
-        )
+        logger.info(jline("output", component, "cs_tex", path=cs_path))
+        logger.info(jline("output", component, "specs", path=specs_out))
 
         audit.finish_success()
         return Qf08SpecsOut(

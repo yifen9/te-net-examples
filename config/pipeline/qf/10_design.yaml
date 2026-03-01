@@ -1,6 +1,7 @@
-name: 10_design_v1
+name: 10_design_smoke
+
 seed:
-  base: 123
+  base: 2026
   digest_size: 8
   person: te_net_lib
   spawn_key: []
@@ -9,9 +10,9 @@ lag: 1
 exclude_self: true
 
 grid:
-  trials: 10
+  trials: 30
   N: [50, 100]
-  T: [260, 520]
+  T: [150, 260]
 
 dgp:
   - name: planted_var
@@ -27,6 +28,15 @@ dgp:
       edge_prob: [0.02]
       coef_scale: [0.3]
       noise_scale: [1.0]
+      burnin: 200
+
+  - name: garch_factor
+    params:
+      k: [3]
+      omega: [0.05]
+      alpha: [0.05]
+      beta: [0.9]
+      loading_scale: [0.3]
       burnin: 200
 
 preprocess:

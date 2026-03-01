@@ -14,9 +14,10 @@ from te_net_examples.io.json import read_json, write_json
 from te_net_examples.io.yaml import read_yaml
 from te_net_examples.utils.audit import Audit
 from te_net_examples.utils.console import ConsoleSink
+from te_net_examples.utils.jlog import jline
 from te_net_examples.utils.logger import Logger
-from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.progress import Progress
+from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.versioner import build_version_dir
 from te_net_lib.te.lasso_te import lasso_te_matrix
 from te_net_lib.te.linear_ols import ols_te_matrix
@@ -56,25 +57,6 @@ def _require_dir(path: str) -> str:
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
-
-
-def _jline(event: str, component: str, msg: str, **kw: Any) -> str:
-    items = {"event": event, "component": component, "msg": msg, **kw}
-    parts: list[str] = []
-    for k in sorted(items.keys()):
-        v = items[k]
-        if v is True:
-            parts.append(f'"{k}":true')
-        elif v is False:
-            parts.append(f'"{k}":false')
-        elif v is None:
-            parts.append(f'"{k}":null')
-        elif isinstance(v, (int, float)):
-            parts.append(f'"{k}":{v}')
-        else:
-            s = str(v).replace("\\", "\\\\").replace('"', '\\"')
-            parts.append(f'"{k}":"{s}"')
-    return "{" + ",".join(parts) + "}"
 
 
 def _df_from_csv(path: str) -> pd.DataFrame:
@@ -139,7 +121,7 @@ def _trial_dir(run_dir: str, design_id: int) -> str:
 def _read_returns(path: str) -> np.ndarray:
     x = np.load(path, allow_pickle=False)
     if not isinstance(x, np.ndarray):
-        raise ValueError(f"invalid returns array: {path}")
+        raise ValueError(f"invalid returns: {path}")
     if x.ndim != 2:
         raise ValueError(f"returns must be 2D: {path}")
     return x.astype(np.float64, copy=False)
@@ -250,11 +232,7 @@ def run_qf_13_te_estimate(
     }
 
     meta = build_meta(
-        params=params,
-        env=env_path,
-        script=script_path_abs,
-        cfg=cfg_path,
-        src=src_dir,
+        params=params, env=env_path, script=script_path_abs, cfg=cfg_path, src=src_dir
     )
 
     run_dir = build_version_dir(output_root_abs, meta)
@@ -262,20 +240,19 @@ def run_qf_13_te_estimate(
     logger = Logger(sinks=[ConsoleSink(), audit])
 
     try:
-        logger.info(_jline("stage", component, "start", run_dir=run_dir))
-        logger.info(_jline("input", component, "input_dir", path=input_dir))
-        logger.info(_jline("input", component, "design", path=design_in))
-        logger.info(_jline("input", component, "config", path=cfg_path))
+        logger.info(jline("stage", component, "start", run_dir=run_dir))
+        logger.info(jline("input", component, "input_dir", path=input_dir))
+        logger.info(jline("input", component, "design", path=design_in))
+        logger.info(jline("input", component, "config", path=cfg_path))
 
         cfg_dir = os.path.join(run_dir, "cfg")
         os.makedirs(cfg_dir, exist_ok=True)
         cfg_copied = os.path.join(cfg_dir, os.path.basename(cfg_path))
         shutil.copy2(cfg_path, cfg_copied)
-        logger.info(_jline("output", component, "config_copied", path=cfg_copied))
+        logger.info(jline("output", component, "config_copied", path=cfg_copied))
 
         df = _df_from_csv(design_in)
         df = df.rename(columns={c: c.strip() for c in df.columns})
-
         need = ["design_id", "lag", "exclude_self", "te_name"]
         _require_cols(df, need)
 
@@ -437,7 +414,7 @@ def run_qf_13_te_estimate(
 
         summary_out = os.path.join(run_dir, "summary.json")
         write_json(summary_out, summ)
-        logger.info(_jline("output", component, "summary", path=summary_out))
+        logger.info(jline("output", component, "summary", path=summary_out))
 
         audit.finish_success()
         return Qf13TeEstimateOut(run_dir=run_dir, meta=meta, summary_path=summary_out)

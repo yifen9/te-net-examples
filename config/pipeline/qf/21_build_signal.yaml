@@ -1,0 +1,14 @@
+name: 21_build_signal_v1
+
+filters:
+  dgp_allow:
+    - garch_factor
+
+signal:
+  kind: nio
+  exclude_self: true
+  normalize_nio: true
+
+output:
+  save_trial_npy: true
+  save_index_csv: true

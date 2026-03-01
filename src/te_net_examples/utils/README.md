@@ -110,3 +110,19 @@ from te_net_examples.utils.lineage import trace
 nodes = trace("/path/to/run_dir", field="input_dir")
 # nodes[i].run_dir, nodes[i].prev_run_dir
 ```
+
+## jlog — Structured JSON helpers
+
+`jlog` provides stable JSON serialization helpers for emitting structured log events.
+Prefer these helpers over hand-written JSON strings to avoid escaping issues and to ensure Audit can reliably parse events as JSON.
+
+```python
+from te_net_examples.utils.jlog import jdump, jline
+from te_net_examples.utils.logger import Logger
+from te_net_examples.utils.console import ConsoleSink
+
+logger = Logger(sinks=[ConsoleSink(transient=False)])
+
+logger.info(jdump({"event": "app", "msg": "start"}))
+logger.info(jline("stage", "qf/14_graph_select", "start", run_dir="/tmp/run"))
+```

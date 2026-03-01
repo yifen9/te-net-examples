@@ -26,7 +26,7 @@ from te_net_lib.rng.core import RngScope
 
 
 @dataclass(frozen=True, slots=True)
-class Qf11GenerateOut:
+class Qf17GenerateRichOut:
     run_dir: str
     meta: dict[str, Any]
     summary_path: str
@@ -74,6 +74,28 @@ def _require_cols(df: pd.DataFrame, cols: list[str]) -> None:
         raise ValueError(f"missing required columns: {missing}")
 
 
+def _person_bytes(x: Any) -> bytes:
+    b = str(x).encode("utf-8")
+    if len(b) > 16:
+        raise ValueError("seed.person must be at most 16 bytes when UTF-8 encoded")
+    return b
+
+
+def _scope_from_seed(seed: dict[str, Any]) -> RngScope:
+    base = seed.get("base", None)
+    if base is None:
+        raise ValueError("seed.base is required")
+    digest_size = int(seed.get("digest_size", 8))
+    person = _person_bytes(seed.get("person", "te_net_lib"))
+    spawn_key = seed.get("spawn_key", [])
+    if spawn_key is None:
+        spawn_key = []
+    if not isinstance(spawn_key, list):
+        raise ValueError("seed.spawn_key must be a list")
+    sk = [int(v) for v in spawn_key]
+    return RngScope.from_seed(int(base), int(digest_size), person, sk)
+
+
 def _to_int(x: Any, name: str) -> int:
     if isinstance(x, bool):
         raise ValueError(f"invalid int for {name}: {x}")
@@ -96,32 +118,21 @@ def _to_int(x: Any, name: str) -> int:
 
 
 def _to_float(x: Any, name: str) -> float:
-    try:
+    if isinstance(x, (int, float, np.integer, np.floating)):
         return float(x)
-    except Exception as e:
-        raise ValueError(f"invalid float for {name}: {x}") from e
+    s = str(x).strip()
+    if s == "" or s.lower() == "nan":
+        raise ValueError(f"invalid float for {name}: {x}")
+    return float(s)
 
 
-def _person_bytes(x: Any) -> bytes:
-    b = str(x).encode("utf-8")
-    if len(b) > 16:
-        raise ValueError("seed.person must be at most 16 bytes when UTF-8 encoded")
-    return b
+def _trial_dir(run_dir: str, design_id: int) -> str:
+    return os.path.join(run_dir, "trial", f"{int(design_id):08d}")
 
 
-def _scope_from_seed(seed: dict[str, Any]) -> RngScope:
-    base = seed.get("base", None)
-    if base is None:
-        raise ValueError("seed.base is required in design summary")
-    digest_size = int(seed.get("digest_size", 8))
-    person = _person_bytes(seed.get("person", "te_net_lib"))
-    spawn_key = seed.get("spawn_key", [])
-    if spawn_key is None:
-        spawn_key = []
-    if not isinstance(spawn_key, list):
-        raise ValueError("seed.spawn_key must be a list")
-    sk = [int(v) for v in spawn_key]
-    return RngScope.from_seed(int(base), int(digest_size), person, sk)
+def _write_npy(path: str, arr: np.ndarray) -> None:
+    _ensure_dir(os.path.dirname(path))
+    np.save(path, arr)
 
 
 def _adj_er(rng: np.random.Generator, N: int, edge_prob: float) -> np.ndarray:
@@ -132,13 +143,10 @@ def _adj_er(rng: np.random.Generator, N: int, edge_prob: float) -> np.ndarray:
     return a
 
 
-def _trial_dir(run_dir: str, design_id: int) -> str:
-    return os.path.join(run_dir, "trial", f"{int(design_id):08d}")
-
-
-def _write_npy(path: str, arr: np.ndarray) -> None:
-    _ensure_dir(os.path.dirname(path))
-    np.save(path, arr)
+def _safe_array_info(x: Any) -> Any:
+    if isinstance(x, np.ndarray):
+        return {"shape": list(x.shape), "dtype": str(x.dtype)}
+    return None
 
 
 def _generate_one(
@@ -151,7 +159,11 @@ def _generate_one(
     max_tries: int,
     save_true_adj: bool,
     save_trial_json: bool,
-    extras_mode: str,
+    save_A: bool,
+    save_factors: bool,
+    save_loadings: bool,
+    save_sigma2: bool,
+    save_eps: bool,
 ) -> dict[str, Any]:
     design_id = _to_int(row["design_id"], "design_id")
     seed_key = str(row.get("seed_key", f"design_id={design_id}"))
@@ -207,11 +219,8 @@ def _generate_one(
                 noise_scale=float(noise_scale),
                 burnin=int(burnin),
             )
-            spectral_radius = (
-                float(sample.extras.get("spectral_radius"))
-                if "spectral_radius" in sample.extras
-                else None
-            )
+            sr = sample.extras.get("spectral_radius", None)
+            spectral_radius = float(sr) if sr is not None else None
         elif dgp == "garch_factor":
             k = _to_int(row.get("dgp_k"), "dgp_k")
             omega = _to_float(row.get("dgp_omega"), "dgp_omega")
@@ -253,46 +262,61 @@ def _generate_one(
     ret_path = os.path.join(out_dir, "returns.npy")
     _write_npy(ret_path, returns)
 
-    true_adj = sample.true_adj
     true_adj_path = None
-    if save_true_adj and true_adj is not None:
+    if save_true_adj and sample.true_adj is not None:
         true_adj_path = os.path.join(out_dir, "true_adj.npy")
-        _write_npy(true_adj_path, true_adj.astype(np.int8, copy=False))
+        _write_npy(true_adj_path, sample.true_adj.astype(np.int8, copy=False))
 
-    extras: dict[str, Any] = {}
-    if extras_mode == "none":
-        extras = {}
-    elif extras_mode == "full":
-        for k, v in sample.extras.items():
-            if isinstance(v, (int, float, str, bool)) or v is None:
-                extras[str(k)] = v
-            elif isinstance(v, np.ndarray):
-                extras[str(k)] = {"shape": list(v.shape), "dtype": str(v.dtype)}
-            elif isinstance(v, dict):
-                extras[str(k)] = v
-            else:
-                extras[str(k)] = str(v)
-    else:
-        for k, v in sample.extras.items():
-            if isinstance(v, (int, float, str, bool)) or v is None:
-                extras[str(k)] = v
-            elif isinstance(v, np.ndarray):
-                extras[str(k)] = {"shape": list(v.shape), "dtype": str(v.dtype)}
-            elif isinstance(v, dict):
-                ok = True
-                for _, vv in v.items():
-                    if not isinstance(vv, (int, float, str, bool)) and vv is not None:
-                        ok = False
-                        break
-                extras[str(k)] = (
-                    v if ok else {"keys": sorted([str(x) for x in v.keys()])}
-                )
-            else:
-                extras[str(k)] = str(v)
+    A_path = None
+    if save_A:
+        A = sample.extras.get("A", None)
+        if isinstance(A, np.ndarray):
+            A_path = os.path.join(out_dir, "A.npy")
+            _write_npy(A_path, A.astype(np.float64, copy=False))
+
+    factors_path = None
+    if save_factors:
+        F = sample.extras.get("factors", None)
+        if isinstance(F, np.ndarray):
+            factors_path = os.path.join(out_dir, "factors.npy")
+            _write_npy(factors_path, F.astype(np.float64, copy=False))
+
+    loadings_path = None
+    if save_loadings:
+        B = sample.extras.get("loadings", None)
+        if isinstance(B, np.ndarray):
+            loadings_path = os.path.join(out_dir, "loadings.npy")
+            _write_npy(loadings_path, B.astype(np.float64, copy=False))
+
+    sigma2_path = None
+    if save_sigma2:
+        s2 = sample.extras.get("sigma2", None)
+        if isinstance(s2, np.ndarray):
+            sigma2_path = os.path.join(out_dir, "sigma2.npy")
+            _write_npy(sigma2_path, s2.astype(np.float64, copy=False))
+
+    eps_path = None
+    if save_eps:
+        e = sample.extras.get("eps", None)
+        if isinstance(e, np.ndarray):
+            eps_path = os.path.join(out_dir, "eps.npy")
+            _write_npy(eps_path, e.astype(np.float64, copy=False))
 
     trial_json_path = None
     if save_trial_json:
-        meta_obj = {
+        extras_info: dict[str, Any] = {}
+        for k, v in sample.extras.items():
+            info = _safe_array_info(v)
+            if info is not None:
+                extras_info[str(k)] = info
+            elif isinstance(v, (int, float, str, bool)) or v is None:
+                extras_info[str(k)] = v
+            elif isinstance(v, dict):
+                extras_info[str(k)] = {"keys": sorted([str(x) for x in v.keys()])}
+            else:
+                extras_info[str(k)] = str(v)
+
+        trial = {
             "design_id": int(design_id),
             "seed_key": seed_key,
             "dgp": dgp,
@@ -303,15 +327,22 @@ def _generate_one(
             "spectral_radius": float(spectral_radius)
             if spectral_radius is not None
             else None,
-            "paths": {"returns": ret_path, "true_adj": true_adj_path},
-            "extras": extras,
+            "paths": {
+                "returns": ret_path,
+                "true_adj": true_adj_path,
+                "A": A_path,
+                "factors": factors_path,
+                "loadings": loadings_path,
+                "sigma2": sigma2_path,
+                "eps": eps_path,
+            },
+            "extras": extras_info,
         }
         trial_json_path = os.path.join(out_dir, "trial.json")
-        write_json(trial_json_path, meta_obj)
+        write_json(trial_json_path, trial)
 
     return {
         "design_id": int(design_id),
-        "seed_key": seed_key,
         "dgp": dgp,
         "accepted": bool(accepted),
         "tries": int(tries),
@@ -319,13 +350,18 @@ def _generate_one(
         if spectral_radius is not None
         else None,
         "trial_dir": out_dir,
-        "returns_path": ret_path,
-        "true_adj_path": true_adj_path,
-        "trial_json_path": trial_json_path,
+        "returns": ret_path,
+        "true_adj": true_adj_path,
+        "trial_json": trial_json_path,
+        "A": A_path,
+        "factors": factors_path,
+        "loadings": loadings_path,
+        "sigma2": sigma2_path,
+        "eps": eps_path,
     }
 
 
-def run_qf_11_generate(
+def run_qf_17_generate_rich(
     *,
     input_dir: str,
     output_root: str,
@@ -334,15 +370,25 @@ def run_qf_11_generate(
     script_path: str,
     component: str,
     design_filename: str,
-) -> Qf11GenerateOut:
+    summary_filename: str,
+) -> Qf17GenerateRichOut:
     input_dir = _require_dir(input_dir)
     src_dir = _require_dir(src_dir)
     output_root_abs = os.path.abspath(output_root)
 
-    design_in = _require_file(os.path.join(input_dir, design_filename))
-    design_summary_in = _require_file(os.path.join(input_dir, "summary.json"))
     cfg_path = _require_file(os.path.abspath(config_path))
     script_path_abs = _require_file(os.path.abspath(script_path))
+
+    design_in = _require_file(os.path.join(input_dir, design_filename))
+    summary_in = _require_file(os.path.join(input_dir, summary_filename))
+    summ = read_json(summary_in)
+    if not isinstance(summ, dict):
+        raise ValueError("design summary must be a mapping")
+    seed = summ.get("seed", None)
+    if not isinstance(seed, dict):
+        raise ValueError("design summary missing seed mapping")
+
+    scope = _scope_from_seed(seed)
 
     repo_root = _repo_root_from_path(Path(script_path_abs))
     env_path = _require_file(str(repo_root / "uv.lock"))
@@ -350,15 +396,6 @@ def run_qf_11_generate(
     cfg = read_yaml(cfg_path)
     if not isinstance(cfg, dict):
         raise ValueError("config must be a mapping")
-
-    design_summary = read_json(design_summary_in)
-    if not isinstance(design_summary, dict):
-        raise ValueError("design summary must be a mapping")
-    seed = design_summary.get("seed", None)
-    if not isinstance(seed, dict):
-        raise ValueError("design summary missing seed mapping")
-
-    scope = _scope_from_seed(seed)
 
     stability = cfg.get("stability", {})
     if stability is None:
@@ -369,36 +406,36 @@ def run_qf_11_generate(
     max_var_spectral_radius = stability.get("max_var_spectral_radius", None)
     max_tries = int(stability.get("max_tries", 1))
 
-    output = cfg.get("output", {})
-    if output is None:
-        output = {}
-    if not isinstance(output, dict):
+    output_cfg = cfg.get("output", {})
+    if output_cfg is None:
+        output_cfg = {}
+    if not isinstance(output_cfg, dict):
         raise ValueError("config.output must be a mapping")
 
-    returns_format = str(output.get("returns_format", "npy"))
-    if returns_format != "npy":
-        raise ValueError(f"unsupported returns_format: {returns_format}")
-
-    save_true_adj = bool(output.get("save_true_adj", True))
-    save_trial_json = bool(output.get("save_trial_json", True))
-    extras_mode = str(output.get("extras_mode", "summary")).strip()
-    if extras_mode not in ("summary", "full", "none"):
-        raise ValueError(f"unsupported extras_mode: {extras_mode}")
+    save_true_adj = bool(output_cfg.get("save_true_adj", True))
+    save_trial_json = bool(output_cfg.get("save_trial_json", True))
+    save_A = bool(output_cfg.get("save_A", True))
+    save_factors = bool(output_cfg.get("save_factors", True))
+    save_loadings = bool(output_cfg.get("save_loadings", True))
+    save_sigma2 = bool(output_cfg.get("save_sigma2", True))
+    save_eps = bool(output_cfg.get("save_eps", True))
 
     params: dict[str, Any] = {
         "input_dir": os.path.abspath(input_dir),
         "output_root": output_root_abs,
-        "design_filename": design_filename,
-        "design_path": os.path.abspath(design_in),
-        "design_summary_path": os.path.abspath(design_summary_in),
         "config_path": cfg_path,
         "component": component,
+        "design_path": os.path.abspath(design_in),
+        "design_summary_path": os.path.abspath(summary_in),
         "max_var_spectral_radius": max_var_spectral_radius,
         "max_tries": int(max_tries),
-        "returns_format": returns_format,
         "save_true_adj": bool(save_true_adj),
         "save_trial_json": bool(save_trial_json),
-        "extras_mode": extras_mode,
+        "save_A": bool(save_A),
+        "save_factors": bool(save_factors),
+        "save_loadings": bool(save_loadings),
+        "save_sigma2": bool(save_sigma2),
+        "save_eps": bool(save_eps),
     }
 
     meta = build_meta(
@@ -412,7 +449,7 @@ def run_qf_11_generate(
     try:
         logger.info(jline("stage", component, "start", run_dir=run_dir))
         logger.info(jline("input", component, "design", path=design_in))
-        logger.info(jline("input", component, "design_summary", path=design_summary_in))
+        logger.info(jline("input", component, "design_summary", path=summary_in))
         logger.info(jline("input", component, "config", path=cfg_path))
 
         cfg_dir = os.path.join(run_dir, "cfg")
@@ -425,9 +462,9 @@ def run_qf_11_generate(
         df = df.rename(columns={c: c.strip() for c in df.columns})
         need = ["design_id", "seed_key", "dgp", "N", "T"]
         _require_cols(df, need)
-        records = df.to_dict(orient="records")
 
-        p = Progress(logger=logger, name="qf/11_generate", total=int(len(records)))
+        records = df.to_dict(orient="records")
+        p = Progress(logger=logger, name="qf/17_generate_rich", total=int(len(records)))
         p.start()
 
         items: list[dict[str, Any]] = []
@@ -446,7 +483,11 @@ def run_qf_11_generate(
                 max_tries=int(max_tries),
                 save_true_adj=bool(save_true_adj),
                 save_trial_json=bool(save_trial_json),
-                extras_mode=extras_mode,
+                save_A=bool(save_A),
+                save_factors=bool(save_factors),
+                save_loadings=bool(save_loadings),
+                save_sigma2=bool(save_sigma2),
+                save_eps=bool(save_eps),
             )
             items.append(
                 {
@@ -466,30 +507,20 @@ def run_qf_11_generate(
 
         p.finish()
 
-        summ = {
+        summ_out = {
             "n_rows": int(len(records)),
             "n_accepted": int(n_ok),
             "n_rejected": int(n_reject),
-            "max_var_spectral_radius": float(max_var_spectral_radius)
-            if max_var_spectral_radius is not None
-            else None,
-            "max_tries": int(max_tries),
-            "output": {
-                "returns_format": returns_format,
-                "save_true_adj": bool(save_true_adj),
-                "save_trial_json": bool(save_trial_json),
-                "extras_mode": extras_mode,
-            },
             "trial_root": os.path.join(run_dir, "trial"),
             "items": items[:2000],
         }
 
         summary_out = os.path.join(run_dir, "summary.json")
-        write_json(summary_out, summ)
+        write_json(summary_out, summ_out)
         logger.info(jline("output", component, "summary", path=summary_out))
 
         audit.finish_success()
-        return Qf11GenerateOut(run_dir=run_dir, meta=meta, summary_path=summary_out)
+        return Qf17GenerateRichOut(run_dir=run_dir, meta=meta, summary_path=summary_out)
     except BaseException as e:
         audit.finish_error(e)
         raise

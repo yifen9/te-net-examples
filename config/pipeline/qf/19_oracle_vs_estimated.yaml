@@ -1,0 +1,13 @@
+name: 19_oracle_vs_estimated_v2
+
+input:
+  oracle_optional: true
+
+metrics:
+  signal:
+    normalize_nio: true
+    exclude_self: true
+
+output:
+  save_compare_csv: true
+  save_trial_json: true

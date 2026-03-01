@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -10,6 +9,7 @@ from typing import Any
 
 from te_net_examples.utils.audit import Audit
 from te_net_examples.utils.console import ConsoleSink
+from te_net_examples.utils.jlog import jline
 from te_net_examples.utils.logger import Logger
 from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.versioner import build_version_dir
@@ -45,10 +45,6 @@ def _require_dir(path: str) -> str:
     if not os.path.isdir(path):
         raise FileNotFoundError(path)
     return path
-
-
-def _j(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def create_source_meta_run(
@@ -90,40 +86,13 @@ def create_source_meta_run(
     logger = Logger(sinks=[ConsoleSink(), audit])
 
     try:
-        logger.info(
-            _j(
-                {
-                    "event": "stage",
-                    "component": component,
-                    "msg": "start",
-                    "run_dir": run_dir,
-                }
-            )
-        )
-        logger.info(
-            _j(
-                {
-                    "event": "input",
-                    "component": component,
-                    "msg": "source_yaml",
-                    "path": source_path,
-                }
-            )
-        )
+        logger.info(jline("stage", component, "start", run_dir=run_dir))
+        logger.info(jline("input", component, "source_yaml", path=source_path))
 
         dst = os.path.join(run_dir, source_name)
         shutil.copy2(source_path, dst)
 
-        logger.info(
-            _j(
-                {
-                    "event": "output",
-                    "component": component,
-                    "msg": "copied",
-                    "path": dst,
-                }
-            )
-        )
+        logger.info(jline("output", component, "copied", path=dst))
         audit.finish_success()
         return SourceMetaOut(run_dir=run_dir, meta=meta, copied_path=dst)
     except BaseException as e:

@@ -759,7 +759,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=14.3.3" },
-    { name = "te-net-lib", git = "https://github.com/yifen9/te-net-lib?rev=c46430b" },
+    { name = "te-net-lib", git = "https://github.com/yifen9/te-net-lib?rev=5be7eee" },
 ]
 
 [package.metadata.requires-dev]
@@ -771,7 +771,7 @@ dev = [
 [[package]]
 name = "te-net-lib"
 version = "0.1.2"
-source = { git = "https://github.com/yifen9/te-net-lib?rev=c46430b#c46430bd08f90da99189a413635ac984bc587041" }
+source = { git = "https://github.com/yifen9/te-net-lib?rev=5be7eee#5be7eee4da73fd8575d1285b57164dc8dad04e0a" }
 dependencies = [
     { name = "numpy" },
 ]

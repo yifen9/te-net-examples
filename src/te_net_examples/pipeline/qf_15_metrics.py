@@ -14,6 +14,7 @@ from te_net_examples.io.json import read_json, write_json
 from te_net_examples.io.yaml import read_yaml
 from te_net_examples.utils.audit import Audit
 from te_net_examples.utils.console import ConsoleSink
+from te_net_examples.utils.jlog import jline
 from te_net_examples.utils.logger import Logger
 from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.progress import Progress
@@ -62,25 +63,6 @@ def _require_dir(path: str) -> str:
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
-
-
-def _jline(event: str, component: str, msg: str, **kw: Any) -> str:
-    items = {"event": event, "component": component, "msg": msg, **kw}
-    parts: list[str] = []
-    for k in sorted(items.keys()):
-        v = items[k]
-        if v is True:
-            parts.append(f'"{k}":true')
-        elif v is False:
-            parts.append(f'"{k}":false')
-        elif v is None:
-            parts.append(f'"{k}":null')
-        elif isinstance(v, (int, float)):
-            parts.append(f'"{k}":{v}')
-        else:
-            s = str(v).replace("\\", "\\\\").replace('"', '\\"')
-            parts.append(f'"{k}":"{s}"')
-    return "{" + ",".join(parts) + "}"
 
 
 def _df_from_csv(path: str) -> pd.DataFrame:
@@ -132,7 +114,7 @@ def _to_int(x: Any, name: str) -> int:
     except Exception:
         try:
             f = float(s)
-            if f.is_integer():
+            if float(f).is_integer():
                 return int(f)
         except Exception:
             pass
@@ -164,15 +146,18 @@ def _read_meta_params(run_dir: str) -> dict[str, Any]:
 
 
 def _find_true_adj_root(
-    start_dir: str, design_ids: list[int], depth: int
+    start_dir: str, design_ids: list[int], depth: int, max_check: int
 ) -> str | None:
     cur = start_dir
-    for _ in range(depth):
-        ok = True
-        for did in design_ids[:5]:
+    ids = design_ids[: max(0, int(max_check))]
+    if not ids:
+        return None
+    for _ in range(int(depth)):
+        ok = False
+        for did in ids:
             p = os.path.join(cur, "trial", f"{did:08d}", "true_adj.npy")
-            if not os.path.isfile(p):
-                ok = False
+            if os.path.isfile(p):
+                ok = True
                 break
         if ok:
             return cur
@@ -270,14 +255,11 @@ def run_qf_15_metrics(
         "save_signal_json": bool(save_signal_json),
         "signal_normalize_nio": bool(sig_normalize),
         "signal_exclude_self": bool(sig_exclude_self),
+        "schema_version": 2,
     }
 
     meta = build_meta(
-        params=params,
-        env=env_path,
-        script=script_path_abs,
-        cfg=cfg_path,
-        src=src_dir,
+        params=params, env=env_path, script=script_path_abs, cfg=cfg_path, src=src_dir
     )
 
     run_dir = build_version_dir(output_root_abs, meta)
@@ -285,16 +267,16 @@ def run_qf_15_metrics(
     logger = Logger(sinks=[ConsoleSink(), audit])
 
     try:
-        logger.info(_jline("stage", component, "start", run_dir=run_dir))
-        logger.info(_jline("input", component, "input_dir", path=input_dir))
-        logger.info(_jline("input", component, "design", path=design_in))
-        logger.info(_jline("input", component, "config", path=cfg_path))
+        logger.info(jline("stage", component, "start", run_dir=run_dir))
+        logger.info(jline("input", component, "input_dir", path=input_dir))
+        logger.info(jline("input", component, "design", path=design_in))
+        logger.info(jline("input", component, "config", path=cfg_path))
 
         cfg_dir = os.path.join(run_dir, "cfg")
         os.makedirs(cfg_dir, exist_ok=True)
         cfg_copied = os.path.join(cfg_dir, os.path.basename(cfg_path))
         shutil.copy2(cfg_path, cfg_copied)
-        logger.info(_jline("output", component, "config_copied", path=cfg_copied))
+        logger.info(jline("output", component, "config_copied", path=cfg_copied))
 
         df = _df_from_csv(design_in)
         df = df.rename(columns={c: c.strip() for c in df.columns})
@@ -303,11 +285,11 @@ def run_qf_15_metrics(
         _require_cols(df, need)
 
         design_ids = [_to_int(x, "design_id") for x in df["design_id"].tolist()]
-        true_root = _find_true_adj_root(input_dir, design_ids, 12)
+        true_root = _find_true_adj_root(input_dir, design_ids, 12, 50)
         if true_adj_required and true_root is None:
             raise FileNotFoundError("true_adj root not found via upstream chain")
         if true_root is not None:
-            logger.info(_jline("input", component, "true_adj_root", path=true_root))
+            logger.info(jline("input", component, "true_adj_root", path=true_root))
 
         records = df.to_dict(orient="records")
         p = Progress(logger=logger, name="qf/15_metrics", total=int(len(records)))
@@ -315,6 +297,9 @@ def run_qf_15_metrics(
 
         rows: list[dict[str, Any]] = []
         items: list[dict[str, Any]] = []
+        skipped_missing_adj_hat = 0
+        n_with_true_adj = 0
+        n_without_true_adj = 0
 
         for r in records:
             design_id = _to_int(r["design_id"], "design_id")
@@ -322,22 +307,146 @@ def run_qf_15_metrics(
             hub_k = _to_int(r["hub_k"], "hub_k")
 
             in_dir = _trial_dir(input_dir, design_id)
-            adj_hat_in = _require_file(os.path.join(in_dir, "adj_hat.npy"))
-            adj_hat = _read_adj(adj_hat_in)
+            adj_hat_in = os.path.join(in_dir, "adj_hat.npy")
+            out_dir = _trial_dir(run_dir, design_id)
+            _ensure_dir(out_dir)
 
             true_adj_in = None
             true_adj = None
             if true_root is not None:
-                true_adj_in = _require_file(
-                    os.path.join(true_root, "trial", f"{design_id:08d}", "true_adj.npy")
+                cand = os.path.join(
+                    true_root, "trial", f"{design_id:08d}", "true_adj.npy"
                 )
-                true_adj = _read_adj(true_adj_in)
+                if os.path.isfile(cand):
+                    true_adj_in = cand
+                    true_adj = _read_adj(true_adj_in)
+
+            if true_adj is not None:
+                n_with_true_adj += 1
+            else:
+                n_without_true_adj += 1
+
+            metrics_path = None
+            signal_path = None
+
+            if not os.path.isfile(adj_hat_in):
+                skipped_missing_adj_hat += 1
+
+                dens_true = None
+                tp = fp = fn = tn = None
+                prec = rec = f1 = None
+                hub_rec = None
+
+                if true_adj is not None:
+                    dens_true = float(graph_density(true_adj, bool(exclude_self)))
+                    n0 = int(true_adj.shape[0])
+                    m0 = int(n0 * (n0 - 1)) if bool(exclude_self) else int(n0 * n0)
+                    tp, fp, fn, tn = 0, 0, 0, m0
+                    prec, rec, f1 = 0.0, 0.0, 0.0
+                    k0 = int(max(min(hub_k, n0), 0))
+                    hub_rec = 0.0 if k0 > 0 else 0.0
+
+                if save_metrics_json:
+                    metrics = {
+                        "schema_version": 2,
+                        "status": "missing_input",
+                        "missing": ["adj_hat.npy"],
+                        "design_id": int(design_id),
+                        "exclude_self": bool(exclude_self),
+                        "hub_k": int(hub_k),
+                        "paths": {"adj_hat": adj_hat_in, "true_adj": true_adj_in},
+                        "density": {
+                            "pred": 0.0,
+                            "true": float(dens_true) if dens_true is not None else None,
+                        },
+                        "edge": {
+                            "tp": int(tp) if tp is not None else None,
+                            "fp": int(fp) if fp is not None else None,
+                            "fn": int(fn) if fn is not None else None,
+                            "tn": int(tn) if tn is not None else None,
+                            "precision": float(prec) if prec is not None else None,
+                            "recall": float(rec) if rec is not None else None,
+                            "f1": float(f1) if f1 is not None else None,
+                        },
+                        "hub_recovery": {
+                            "k": int(hub_k),
+                            "nio_based": float(hub_rec)
+                            if hub_rec is not None
+                            else None,
+                        },
+                    }
+                    metrics_path = os.path.join(out_dir, "metrics.json")
+                    write_json(metrics_path, metrics)
+
+                if save_signal_json:
+                    signal = {
+                        "schema_version": 1,
+                        "status": "missing_input",
+                        "design_id": int(design_id),
+                        "signal": {
+                            "normalize": bool(sig_normalize),
+                            "exclude_self": bool(sig_exclude_self),
+                        },
+                        "nio": [],
+                        "out_strength": [],
+                        "in_strength": [],
+                    }
+                    signal_path = os.path.join(out_dir, "signal.json")
+                    write_json(signal_path, signal)
+
+                row_out = {
+                    "design_id": int(design_id),
+                    "exclude_self": bool(exclude_self),
+                    "hub_k": int(hub_k),
+                    "density_pred": 0.0,
+                    "density_true": float(dens_true) if dens_true is not None else "",
+                    "tp": int(tp) if tp is not None else "",
+                    "fp": int(fp) if fp is not None else "",
+                    "fn": int(fn) if fn is not None else "",
+                    "tn": int(tn) if tn is not None else "",
+                    "precision": float(prec) if prec is not None else "",
+                    "recall": float(rec) if rec is not None else "",
+                    "f1": float(f1) if f1 is not None else "",
+                    "hub_rec_nio": float(hub_rec) if hub_rec is not None else "",
+                    "adj_hat": adj_hat_in,
+                    "true_adj": true_adj_in if true_adj_in is not None else "",
+                    "metrics_json": metrics_path if metrics_path is not None else "",
+                    "signal_json": signal_path if signal_path is not None else "",
+                }
+                rows.append(row_out)
+
+                items.append(
+                    {
+                        "design_id": int(design_id),
+                        "skipped": True,
+                        "reason": "missing_adj_hat",
+                        "adj_hat": adj_hat_in,
+                        "true_adj": true_adj_in,
+                        "metrics_json": metrics_path,
+                        "signal_json": signal_path,
+                    }
+                )
+
+                p.step(1)
+                continue
+
+            adj_hat = _read_adj(adj_hat_in)
 
             dens_hat = float(graph_density(adj_hat, bool(exclude_self)))
             sig_hat = compute_nio(adj_hat, bool(sig_exclude_self), bool(sig_normalize))
 
             hub_rec = None
+            prec = rec = f1 = None
+            tp = fp = fn = tn = None
+            dens_true = None
+
             if true_adj is not None:
+                tp, fp, fn, tn = confusion_counts(true_adj, adj_hat, bool(exclude_self))
+                prec, rec, f1 = precision_recall_f1(
+                    true_adj, adj_hat, bool(exclude_self)
+                )
+                dens_true = float(graph_density(true_adj, bool(exclude_self)))
+
                 k0 = int(max(min(hub_k, true_adj.shape[0]), 0))
                 idx = hub_indices(true_adj, int(k0), bool(exclude_self))
                 true_hubs = np.zeros((true_adj.shape[0],), dtype=np.int8)
@@ -347,31 +456,14 @@ def run_qf_15_metrics(
                     hub_recovery_from_signal(sig_hat.nio, true_hubs, int(k0))
                 )
 
-            prec = rec = f1 = None
-            tp = fp = fn = tn = None
-            dens_true = None
-            if true_adj is not None:
-                tp, fp, fn, tn = confusion_counts(true_adj, adj_hat, bool(exclude_self))
-                prec, rec, f1 = precision_recall_f1(
-                    true_adj, adj_hat, bool(exclude_self)
-                )
-                dens_true = float(graph_density(true_adj, bool(exclude_self)))
-
-            out_dir = _trial_dir(run_dir, design_id)
-            _ensure_dir(out_dir)
-
-            metrics_path = None
-            signal_path = None
-
             if save_metrics_json:
                 metrics = {
+                    "schema_version": 2,
+                    "status": "ok",
                     "design_id": int(design_id),
                     "exclude_self": bool(exclude_self),
                     "hub_k": int(hub_k),
-                    "paths": {
-                        "adj_hat": adj_hat_in,
-                        "true_adj": true_adj_in,
-                    },
+                    "paths": {"adj_hat": adj_hat_in, "true_adj": true_adj_in},
                     "density": {
                         "pred": float(dens_hat),
                         "true": float(dens_true) if dens_true is not None else None,
@@ -395,6 +487,8 @@ def run_qf_15_metrics(
 
             if save_signal_json:
                 signal = {
+                    "schema_version": 1,
+                    "status": "ok",
                     "design_id": int(design_id),
                     "signal": {
                         "normalize": bool(sig_normalize),
@@ -431,6 +525,9 @@ def run_qf_15_metrics(
             items.append(
                 {
                     "design_id": int(design_id),
+                    "skipped": False,
+                    "adj_hat": adj_hat_in,
+                    "true_adj": true_adj_in,
                     "metrics_json": metrics_path,
                     "signal_json": signal_path,
                 }
@@ -462,17 +559,24 @@ def run_qf_15_metrics(
                 "metrics_json",
                 "signal_json",
             ]
-            out_df = out_df[cols].sort_values(["design_id"], ascending=[True])
-            metrics_csv_path = os.path.join(run_dir, "metrics.csv")
-            write_csv(
-                metrics_csv_path, _rows_from_df(out_df), header=list(out_df.columns)
+            out_df = (
+                out_df[cols].sort_values(["design_id"], ascending=[True])
+                if len(out_df)
+                else out_df
             )
+            metrics_csv_path = os.path.join(run_dir, "metrics.csv")
+            write_csv(metrics_csv_path, _rows_from_df(out_df), header=cols)
             logger.info(
-                _jline("output", component, "metrics_csv", path=metrics_csv_path)
+                jline("output", component, "metrics_csv", path=metrics_csv_path)
             )
 
         summ = {
-            "n_rows": int(len(records)),
+            "schema_version": 2,
+            "n_rows_design": int(len(records)),
+            "n_rows_done": int(len(rows)),
+            "skipped_missing_adj_hat": int(skipped_missing_adj_hat),
+            "n_with_true_adj": int(n_with_true_adj),
+            "n_without_true_adj": int(n_without_true_adj),
             "by_dgp": _vc(df, "dgp"),
             "by_te": _vc(df, "te_name"),
             "by_density": _vc(df, "sel_density"),
@@ -484,7 +588,7 @@ def run_qf_15_metrics(
 
         summary_out = os.path.join(run_dir, "summary.json")
         write_json(summary_out, summ)
-        logger.info(_jline("output", component, "summary", path=summary_out))
+        logger.info(jline("output", component, "summary", path=summary_out))
 
         audit.finish_success()
         return Qf15MetricsOut(

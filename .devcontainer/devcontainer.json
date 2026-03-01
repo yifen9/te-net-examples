@@ -9,7 +9,8 @@
         "jeff-hykin.better-dockerfile-syntax",
         "ms-python.python",
         "tamasfe.even-better-toml",
-        "nefrob.vscode-just-syntax"
+        "nefrob.vscode-just-syntax",
+        "kiameow.npy-image-preview"
       ]
     }
   }

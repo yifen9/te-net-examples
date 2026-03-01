@@ -1,0 +1,22 @@
+name: 20_report_compare_v1
+
+groupby:
+  keys:
+    - dgp
+    - te_name
+    - sel_density
+    - fn_n_components
+    - N
+    - T
+
+filters:
+  has_true_adj_only: true
+  oracle_status:
+    - ok
+    - missing
+
+output:
+  save_report_csv: true
+  save_specs_json: true
+  save_figures: true
+  max_points_scatter: 5000

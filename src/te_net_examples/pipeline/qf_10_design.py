@@ -1,25 +1,26 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import shutil
 
 from te_net_examples.io.csv import write_csv
 from te_net_examples.io.json import write_json
 from te_net_examples.io.yaml import read_yaml
 from te_net_examples.utils.audit import Audit
 from te_net_examples.utils.console import ConsoleSink
+from te_net_examples.utils.jlog import jline
 from te_net_examples.utils.logger import Logger
 from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.versioner import build_version_dir
 
 
 @dataclass(frozen=True, slots=True)
-class qf10DesignOut:
+class Qf10DesignOut:
     run_dir: str
     meta: dict[str, Any]
     design_path: str
@@ -60,25 +61,6 @@ def _rows_from_df(df: pd.DataFrame) -> list[list[str]]:
     return out
 
 
-def _jline(event: str, component: str, msg: str, **kw: Any) -> str:
-    items = {"event": event, "component": component, "msg": msg, **kw}
-    parts: list[str] = []
-    for k in sorted(items.keys()):
-        v = items[k]
-        if v is True:
-            parts.append(f'"{k}":true')
-        elif v is False:
-            parts.append(f'"{k}":false')
-        elif v is None:
-            parts.append(f'"{k}":null')
-        elif isinstance(v, (int, float)):
-            parts.append(f'"{k}":{v}')
-        else:
-            s = str(v).replace("\\", "\\\\").replace('"', '\\"')
-            parts.append(f'"{k}":"{s}"')
-    return "{" + ",".join(parts) + "}"
-
-
 def _pick_list(x: Any, name: str) -> list[Any]:
     if x is None:
         raise ValueError(f"missing required field: {name}")
@@ -90,18 +72,9 @@ def _pick_list(x: Any, name: str) -> list[Any]:
 
 
 def _validate_cfg(cfg: dict[str, Any]) -> None:
-    if "name" not in cfg:
-        raise ValueError("config missing: name")
-    if "seed" not in cfg:
-        raise ValueError("config missing: seed")
-    if "grid" not in cfg:
-        raise ValueError("config missing: grid")
-    if "dgp" not in cfg:
-        raise ValueError("config missing: dgp")
-    if "te" not in cfg:
-        raise ValueError("config missing: te")
-    if "graph" not in cfg:
-        raise ValueError("config missing: graph")
+    for k in ("name", "seed", "grid", "dgp", "te", "graph"):
+        if k not in cfg:
+            raise ValueError(f"config missing: {k}")
 
 
 def _design_rows(cfg: dict[str, Any]) -> pd.DataFrame:
@@ -232,7 +205,6 @@ def _design_rows(cfg: dict[str, Any]) -> pd.DataFrame:
 
                                                 for k, v in dgp_par.items():
                                                     row[f"dgp_{k}"] = v
-
                                                 for k, v in te_par.items():
                                                     row[f"te_{k}"] = v
 
@@ -297,7 +269,7 @@ def run_qf_10_design(
     config_path: str,
     script_path: str,
     component: str,
-) -> qf10DesignOut:
+) -> Qf10DesignOut:
     input_root = _require_dir(input_root)
     src_dir = _require_dir(src_dir)
     output_root_abs = os.path.abspath(output_root)
@@ -322,11 +294,7 @@ def run_qf_10_design(
     }
 
     meta = build_meta(
-        params=params,
-        env=env_path,
-        script=script_path_abs,
-        cfg=cfg_path,
-        src=src_dir,
+        params=params, env=env_path, script=script_path_abs, cfg=cfg_path, src=src_dir
     )
 
     run_dir = build_version_dir(output_root_abs, meta)
@@ -334,15 +302,15 @@ def run_qf_10_design(
     logger = Logger(sinks=[ConsoleSink(), audit])
 
     try:
-        logger.info(_jline("stage", component, "start", run_dir=run_dir))
-        logger.info(_jline("input", component, "input_root", path=input_root))
-        logger.info(_jline("input", component, "config", path=cfg_path))
+        logger.info(jline("stage", component, "start", run_dir=run_dir))
+        logger.info(jline("input", component, "input_root", path=input_root))
+        logger.info(jline("input", component, "config", path=cfg_path))
 
         cfg_dir = os.path.join(run_dir, "cfg")
         os.makedirs(cfg_dir, exist_ok=True)
         cfg_copied = os.path.join(cfg_dir, os.path.basename(cfg_path))
         shutil.copy2(cfg_path, cfg_copied)
-        logger.info(_jline("output", component, "config_copied", path=cfg_copied))
+        logger.info(jline("output", component, "config_copied", path=cfg_copied))
 
         df = _design_rows(cfg)
         design_out = os.path.join(run_dir, "design.csv")
@@ -352,15 +320,12 @@ def run_qf_10_design(
         summary_out = os.path.join(run_dir, "summary.json")
         write_json(summary_out, summary)
 
-        logger.info(_jline("output", component, "design", path=design_out))
-        logger.info(_jline("output", component, "summary", path=summary_out))
+        logger.info(jline("output", component, "design", path=design_out))
+        logger.info(jline("output", component, "summary", path=summary_out))
 
         audit.finish_success()
-        return qf10DesignOut(
-            run_dir=run_dir,
-            meta=meta,
-            design_path=design_out,
-            summary_path=summary_out,
+        return Qf10DesignOut(
+            run_dir=run_dir, meta=meta, design_path=design_out, summary_path=summary_out
         )
     except BaseException as e:
         audit.finish_error(e)
