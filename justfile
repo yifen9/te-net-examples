@@ -60,31 +60,12 @@ find-last D:
     uv run python scripts/tools/find_last.py {{D}}
 
 pl-qf:
-    just pl-qf-01 && \
-    just pl-qf-02 && \
-    just pl-qf-03 && \
-    just pl-qf-04 && \
-    just pl-qf-05 && \
-    just pl-qf-06 && \
-    just pl-qf-07 && \
-    just pl-qf-08 && \
-    just pl-qf-09 && \
-    just pl-qf-10 && \
-    just pl-qf-11 && \
-    just pl-qf-12 && \
-    just pl-qf-13 && \
-    just pl-qf-14 && \
-    just pl-qf-15 && \
-    just pl-qf-16 && \
-    just pl-qf-17 && \
-    just pl-qf-18 && \
-    just pl-qf-19 && \
-    just pl-qf-20 && \
     just pl-qf-21 && \
     just pl-qf-22 && \
     just pl-qf-23 && \
-    just pl-qf-90 && \
-    just pl-qf-99
+    just pl-qf-24 && \
+    just pl-qf-80 && \
+    just pl-qf-81
 
 pl-qf-01 DATE=DATA_CRSP_DATE O="data/pipeline/qf/01_meta" S="src":
     uv run python scripts/pipeline/qf/01_meta.py "data/external/crsp/{{DATE}}" "{{O}}" "{{S}}"
@@ -160,6 +141,15 @@ pl-qf-24 I="data/pipeline/qf/15_metrics" O="data/pipeline/qf/24_report_pretty" S
 
 pl-qf-80 I15="data/pipeline/qf/15_metrics" I16="data/pipeline/qf/16_report_figures" I22="data/pipeline/qf/22_cs_tstat" I23="data/pipeline/qf/23_report_signal" O="data/pipeline/qf/80_paper_artifacts" S="src" C="config/pipeline/qf/80_paper_artifacts.yaml":
     uv run python scripts/pipeline/qf/80_paper_artifacts.py "$(just find-last {{I15}})" "$(just find-last {{I16}})" "$(just find-last {{I22}})" "$(just find-last {{I23}})" "{{O}}" "{{S}}" "{{C}}" --component "qf/80_paper_artifacts"
+
+pl-qf-81 I_FIG="data/pipeline/qf/16_report_figures" I_SIG="data/pipeline/qf/23_report_signal" O="data/pipeline/qf/81_paper_figures" S="src" C="config/pipeline/qf/81_paper_figures.yaml":
+    uv run python scripts/pipeline/qf/81_paper_figures.py \
+        "$(just find-last {{I_FIG}})" \
+        "$(just find-last {{I_SIG}})" \
+        "{{O}}" \
+        "{{S}}" \
+        "{{C}}" \
+        --component "qf/81_paper_figures"
 
 pl-qf-99 I="papers/qf/out" O="papers/qf/publish" S="src" C="config/pipeline/qf/99_publish_assets.yaml":
     uv run python src/te_net_examples/tools/publish_assets.py "$(just find-last {{I}})" "{{O}}" "{{S}}" "{{C}}" --component "qf/99_publish_assets" --overwrite

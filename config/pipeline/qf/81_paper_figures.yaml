@@ -1,0 +1,14 @@
+name: 81_paper_figures_v1
+description: "High-fidelity OOP figure rendering for the publication"
+
+aesthetic_overrides:
+  dpi: 300
+  font_family: "sans-serif"
+  palette: "tab10"
+
+outputs:
+  enable_figure_1_recovery: true
+  enable_figure_2_mechanism: true
+  enable_figure_3_density: true
+  enable_figure_4_tn_barrier: true
+  enable_figure_5_nonparametric: true

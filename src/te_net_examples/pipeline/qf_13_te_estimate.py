@@ -19,8 +19,11 @@ from te_net_examples.utils.logger import Logger
 from te_net_examples.utils.progress import Progress
 from te_net_examples.utils.meta import build_meta
 from te_net_examples.utils.versioner import build_version_dir
+
 from te_net_lib.te.lasso_te import lasso_te_matrix
 from te_net_lib.te.linear_ols import ols_te_matrix
+
+from te_net_lib.te.knn_te import knn_te_matrix
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +266,8 @@ def run_qf_13_te_estimate(
         items: list[dict[str, Any]] = []
         n_ols = 0
         n_lasso = 0
+        n_knn = 0
+        n_skipped = 0
 
         for r in records:
             design_id = _to_int(r["design_id"], "design_id")
@@ -284,106 +289,191 @@ def run_qf_13_te_estimate(
             n_iter_path = None
             te_json_path = None
 
-            if te_name == "ols":
-                add_intercept = _to_bool(
-                    r.get("te_add_intercept", True), "te_add_intercept"
-                )
-                out = ols_te_matrix(
-                    R, int(lag), bool(add_intercept), bool(exclude_self)
-                )
-                if save_beta:
-                    beta_path = os.path.join(out_dir, "beta.npy")
-                    _write_npy(beta_path, out.beta.astype(np.float64, copy=False))
-                if save_intercept and out.intercept is not None:
-                    intercept_path = os.path.join(out_dir, "intercept.npy")
-                    _write_npy(
-                        intercept_path, out.intercept.astype(np.float64, copy=False)
+            try:
+                if te_name == "ols":
+                    add_intercept = _to_bool(
+                        r.get("te_add_intercept", True), "te_add_intercept"
                     )
-                if save_resid_var:
-                    resid_var_path = os.path.join(out_dir, "resid_var.npy")
-                    _write_npy(
-                        resid_var_path, out.resid_var.astype(np.float64, copy=False)
+                    out_ols = ols_te_matrix(
+                        R, int(lag), bool(add_intercept), bool(exclude_self)
                     )
-                if save_te_json:
-                    te = {
-                        "design_id": int(design_id),
-                        "te_name": "ols",
-                        "lag": int(lag),
-                        "exclude_self": bool(exclude_self),
-                        "add_intercept": bool(add_intercept),
-                        "input_returns": ret_in,
-                        "beta_shape": [int(out.beta.shape[0]), int(out.beta.shape[1])],
-                        "has_intercept": bool(out.intercept is not None),
-                        "resid_var_q": _qstats(out.resid_var),
-                        "dof": int(out.dof),
-                        "paths": {
-                            "beta": beta_path,
-                            "intercept": intercept_path,
-                            "resid_var": resid_var_path,
-                            "n_iter": None,
-                        },
-                    }
-                    te_json_path = os.path.join(out_dir, "te.json")
-                    write_json(te_json_path, te)
-                n_ols += 1
-            elif te_name == "lasso":
-                alpha = _to_float(r.get("te_alpha"), "te_alpha")
-                max_iter = _to_int(r.get("te_max_iter", 500), "te_max_iter")
-                tol = _to_float(r.get("te_tol", 1e-8), "te_tol")
-                add_intercept = _to_bool(
-                    r.get("te_add_intercept", True), "te_add_intercept"
-                )
-                standardize = _to_bool(r.get("te_standardize", True), "te_standardize")
 
-                out = lasso_te_matrix(
-                    R,
-                    int(lag),
-                    float(alpha),
-                    int(max_iter),
-                    float(tol),
-                    bool(add_intercept),
-                    bool(standardize),
-                    bool(exclude_self),
-                )
+                    if save_beta:
+                        beta_path = os.path.join(out_dir, "beta.npy")
+                        _write_npy(
+                            beta_path, out_ols.beta.astype(np.float64, copy=False)
+                        )
+                    if save_intercept and out_ols.intercept is not None:
+                        intercept_path = os.path.join(out_dir, "intercept.npy")
+                        _write_npy(
+                            intercept_path,
+                            out_ols.intercept.astype(np.float64, copy=False),
+                        )
+                    if save_resid_var:
+                        resid_var_path = os.path.join(out_dir, "resid_var.npy")
+                        _write_npy(
+                            resid_var_path,
+                            out_ols.resid_var.astype(np.float64, copy=False),
+                        )
 
-                if save_beta:
-                    beta_path = os.path.join(out_dir, "beta.npy")
-                    _write_npy(beta_path, out.beta.astype(np.float64, copy=False))
-                if save_intercept and out.intercept is not None:
-                    intercept_path = os.path.join(out_dir, "intercept.npy")
-                    _write_npy(
-                        intercept_path, out.intercept.astype(np.float64, copy=False)
+                    if save_te_json:
+                        te = {
+                            "design_id": int(design_id),
+                            "te_name": "ols",
+                            "lag": int(lag),
+                            "exclude_self": bool(exclude_self),
+                            "add_intercept": bool(add_intercept),
+                            "input_returns": ret_in,
+                            "beta_shape": [
+                                int(out_ols.beta.shape[0]),
+                                int(out_ols.beta.shape[1]),
+                            ],
+                            "has_intercept": bool(out_ols.intercept is not None),
+                            "resid_var_q": _qstats(out_ols.resid_var),
+                            "dof": int(out_ols.dof),
+                            "paths": {
+                                "beta": beta_path,
+                                "intercept": intercept_path,
+                                "resid_var": resid_var_path,
+                                "n_iter": None,
+                            },
+                        }
+                        te_json_path = os.path.join(out_dir, "te.json")
+                        write_json(te_json_path, te)
+                    n_ols += 1
+
+                elif te_name == "lasso":
+                    alpha = _to_float(r.get("te_alpha", 0.01), "te_alpha")
+                    max_iter = _to_int(r.get("te_max_iter", 500), "te_max_iter")
+                    tol = _to_float(r.get("te_tol", 1e-8), "te_tol")
+                    add_intercept = _to_bool(
+                        r.get("te_add_intercept", True), "te_add_intercept"
                     )
-                if save_n_iter:
-                    n_iter_path = os.path.join(out_dir, "n_iter.npy")
-                    _write_npy(n_iter_path, out.n_iter.astype(np.int64, copy=False))
-                if save_te_json:
-                    te = {
-                        "design_id": int(design_id),
-                        "te_name": "lasso",
-                        "lag": int(lag),
-                        "exclude_self": bool(exclude_self),
-                        "alpha": float(alpha),
-                        "max_iter": int(max_iter),
-                        "tol": float(tol),
-                        "add_intercept": bool(add_intercept),
-                        "standardize": bool(standardize),
-                        "input_returns": ret_in,
-                        "beta_shape": [int(out.beta.shape[0]), int(out.beta.shape[1])],
-                        "has_intercept": bool(out.intercept is not None),
-                        "n_iter_q": _qstats(out.n_iter.astype(np.float64, copy=False)),
-                        "paths": {
-                            "beta": beta_path,
-                            "intercept": intercept_path,
-                            "resid_var": None,
-                            "n_iter": n_iter_path,
-                        },
-                    }
-                    te_json_path = os.path.join(out_dir, "te.json")
-                    write_json(te_json_path, te)
-                n_lasso += 1
-            else:
-                raise ValueError(f"unsupported te_name: {te_name}")
+                    standardize = _to_bool(
+                        r.get("te_standardize", True), "te_standardize"
+                    )
+
+                    out_lasso = lasso_te_matrix(
+                        R,
+                        int(lag),
+                        float(alpha),
+                        int(max_iter),
+                        float(tol),
+                        bool(add_intercept),
+                        bool(standardize),
+                        bool(exclude_self),
+                    )
+
+                    if save_beta:
+                        beta_path = os.path.join(out_dir, "beta.npy")
+                        _write_npy(
+                            beta_path, out_lasso.beta.astype(np.float64, copy=False)
+                        )
+                    if save_intercept and out_lasso.intercept is not None:
+                        intercept_path = os.path.join(out_dir, "intercept.npy")
+                        _write_npy(
+                            intercept_path,
+                            out_lasso.intercept.astype(np.float64, copy=False),
+                        )
+                    if save_n_iter:
+                        n_iter_path = os.path.join(out_dir, "n_iter.npy")
+                        _write_npy(
+                            n_iter_path, out_lasso.n_iter.astype(np.int64, copy=False)
+                        )
+
+                    if save_te_json:
+                        te = {
+                            "design_id": int(design_id),
+                            "te_name": "lasso",
+                            "lag": int(lag),
+                            "exclude_self": bool(exclude_self),
+                            "alpha": float(alpha),
+                            "max_iter": int(max_iter),
+                            "tol": float(tol),
+                            "add_intercept": bool(add_intercept),
+                            "standardize": bool(standardize),
+                            "input_returns": ret_in,
+                            "beta_shape": [
+                                int(out_lasso.beta.shape[0]),
+                                int(out_lasso.beta.shape[1]),
+                            ],
+                            "has_intercept": bool(out_lasso.intercept is not None),
+                            "n_iter_q": _qstats(
+                                out_lasso.n_iter.astype(np.float64, copy=False)
+                            ),
+                            "paths": {
+                                "beta": beta_path,
+                                "intercept": intercept_path,
+                                "resid_var": None,
+                                "n_iter": n_iter_path,
+                            },
+                        }
+                        te_json_path = os.path.join(out_dir, "te.json")
+                        write_json(te_json_path, te)
+                    n_lasso += 1
+
+                elif te_name == "knn":
+                    if knn_te_matrix is None:
+                        raise ImportError(
+                            "knn_te_matrix could not be imported from te_net_lib"
+                        )
+
+                    k_neighbors = _to_int(r.get("te_k_neighbors", 3), "te_k_neighbors")
+
+                    out_knn = knn_te_matrix(
+                        returns=R,
+                        lag=int(lag),
+                        k_neighbors=int(k_neighbors),
+                        exclude_self=bool(exclude_self),
+                    )
+
+                    if save_beta:
+                        beta_path = os.path.join(out_dir, "beta.npy")
+                        _write_npy(
+                            beta_path, out_knn.beta.astype(np.float64, copy=False)
+                        )
+
+                    if save_te_json:
+                        te = {
+                            "design_id": int(design_id),
+                            "te_name": "knn",
+                            "lag": int(lag),
+                            "exclude_self": bool(exclude_self),
+                            "k_neighbors": int(k_neighbors),
+                            "input_returns": ret_in,
+                            "beta_shape": [
+                                int(out_knn.beta.shape[0]),
+                                int(out_knn.beta.shape[1]),
+                            ],
+                            "paths": {
+                                "beta": beta_path,
+                                "intercept": None,
+                                "resid_var": None,
+                                "n_iter": None,
+                            },
+                        }
+                        te_json_path = os.path.join(out_dir, "te.json")
+                        write_json(te_json_path, te)
+                    n_knn += 1
+
+                else:
+                    raise ValueError(f"unsupported te_name: {te_name}")
+
+            except Exception as e:
+                # 记录报错但不中断
+                logger.warn(
+                    jline(
+                        "skip",
+                        component,
+                        "estimation_failed",
+                        design_id=design_id,
+                        te_name=te_name,
+                        error=str(e),
+                    )
+                )
+                n_skipped += 1
+                p.step(1)
+                continue
 
             items.append(
                 {
@@ -406,6 +496,8 @@ def run_qf_13_te_estimate(
             "n_rows": int(len(records)),
             "n_ols": int(n_ols),
             "n_lasso": int(n_lasso),
+            "n_knn": int(n_knn),
+            "n_skipped": int(n_skipped),
             "by_te": _vc(df, "te_name"),
             "use_neutral": bool(use_neutral),
             "trial_root": os.path.join(run_dir, "trial"),

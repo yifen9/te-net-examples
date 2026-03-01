@@ -189,7 +189,9 @@ def _generate_one(
             A = sample.extras.get("A", None)
             if isinstance(A, np.ndarray) and A.size > 0:
                 spectral_radius = float(np.max(np.abs(np.linalg.eigvals(A))))
-        elif dgp == "gaussian_var_from_adj":
+
+        # 修复点 1: 兼容 gaussian 别名
+        elif dgp in ("gaussian_var_from_adj", "gaussian"):
             adj_source = str(row.get("dgp_adj_source", "er")).strip()
             noise_scale = _to_float(row.get("dgp_noise_scale"), "dgp_noise_scale")
             burnin = _to_int(row.get("dgp_burnin"), "dgp_burnin")
@@ -212,7 +214,9 @@ def _generate_one(
                 if "spectral_radius" in sample.extras
                 else None
             )
-        elif dgp == "garch_factor":
+
+        # 修复点 2: 将 GARCH 和 Factor 分解全部映射到底层 simulate_garch_factor 引擎
+        elif dgp in ("garch_factor", "garch_only", "factor_only"):
             k = _to_int(row.get("dgp_k"), "dgp_k")
             omega = _to_float(row.get("dgp_omega"), "dgp_omega")
             alpha = _to_float(row.get("dgp_alpha"), "dgp_alpha")

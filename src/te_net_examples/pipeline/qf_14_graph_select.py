@@ -233,18 +233,45 @@ def run_qf_14_graph_select(
 
         items: list[dict[str, Any]] = []
         n_fixed_density = 0
+        n_skipped_missing_beta = 0
 
         for r in records:
             design_id = _to_int(r["design_id"], "design_id")
             sel_name = str(r["sel_name"]).strip()
             density = _to_float(r["sel_density"], "sel_density")
-            mode = str(r.get("sel_mode", "abs")).strip()
-            exclude_self = _to_bool(r.get("sel_exclude_self", True), "sel_exclude_self")
+
+            # --- 热修复：清洗因为 YAML 列表解析错误残留在 CSV 里的字面量括号 ---
+            raw_mode = str(r.get("sel_mode", "abs")).strip()
+            if raw_mode.startswith("[") and raw_mode.endswith("]"):
+                mode = raw_mode.strip("[]'\"")
+            else:
+                mode = raw_mode
+
+            raw_ex = str(r.get("sel_exclude_self", "True")).strip()
+            if raw_ex.startswith("[") and raw_ex.endswith("]"):
+                raw_ex = raw_ex.strip("[]'\"")
+            exclude_self = _to_bool(raw_ex, "sel_exclude_self")
+            # ----------------------------------------------------------------------
 
             in_dir = _trial_dir(input_dir, design_id)
-            beta_in = _require_file(os.path.join(in_dir, "beta.npy"))
-            beta = _read_beta(beta_in)
+            beta_in = os.path.join(in_dir, "beta.npy")
 
+            # 企业级容错：如果上游 13 阶段因为数学错误没有生成 beta，那么这里优雅跳过
+            if not os.path.isfile(beta_in):
+                n_skipped_missing_beta += 1
+                items.append(
+                    {
+                        "design_id": int(design_id),
+                        "skipped": True,
+                        "reason": "missing_beta",
+                        "sel_name": sel_name,
+                        "beta_path": beta_in,
+                    }
+                )
+                p.step(1)
+                continue
+
+            beta = _read_beta(beta_in)
             out_dir = _trial_dir(run_dir, design_id)
             _ensure_dir(out_dir)
 
@@ -313,6 +340,7 @@ def run_qf_14_graph_select(
             "schema_version": 3,
             "n_rows": int(len(records)),
             "n_fixed_density": int(n_fixed_density),
+            "n_skipped_missing_beta": int(n_skipped_missing_beta),
             "by_sel": _vc(df, "sel_name"),
             "by_density": _vc(df, "sel_density"),
             "trial_root": os.path.join(run_dir, "trial"),

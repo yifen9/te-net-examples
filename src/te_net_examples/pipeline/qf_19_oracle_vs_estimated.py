@@ -30,6 +30,11 @@ from te_net_lib.graph.metrics import (
 from te_net_lib.te.lasso_te import lasso_te_matrix
 from te_net_lib.te.linear_ols import ols_te_matrix
 
+try:
+    from te_net_lib.te.knn_te import knn_te_matrix
+except ImportError:
+    knn_te_matrix = None
+
 
 @dataclass(frozen=True, slots=True)
 class Qf19OracleVsEstimatedOut:
@@ -204,7 +209,7 @@ def _eval_one(
         te = ols_te_matrix(returns, int(lag), bool(add_intercept), bool(exclude_self))
         beta = te.beta
     elif te_name == "lasso":
-        alpha = float(te_params["alpha"])
+        alpha = float(te_params.get("alpha", 0.01))
         max_iter = int(te_params.get("max_iter", 500))
         tol = float(te_params.get("tol", 1e-8))
         add_intercept = bool(te_params.get("add_intercept", True))
@@ -220,14 +225,32 @@ def _eval_one(
             bool(exclude_self),
         )
         beta = te.beta
+    elif te_name == "knn":
+        if knn_te_matrix is None:
+            raise ImportError("knn_te_matrix not found")
+        k_neighbors = int(te_params.get("k_neighbors", 3))
+        te = knn_te_matrix(
+            returns,
+            int(lag),
+            k_neighbors,
+            bool(exclude_self),
+        )
+        beta = te.beta
     else:
         raise ValueError(f"unsupported te_name: {te_name}")
+
+    # 清洗因为 YAML 解析错误导致的 sel_mode 引号残留
+    raw_mode = str(sel_mode).strip()
+    if raw_mode.startswith("[") and raw_mode.endswith("]"):
+        clean_mode = raw_mode.strip("[]'\"")
+    else:
+        clean_mode = raw_mode
 
     adj, info = select_fixed_density(
         scores=beta,
         density=float(sel_density),
         exclude_self=bool(sel_exclude_self),
-        mode=str(sel_mode),
+        mode=str(clean_mode),
         return_info=True,
     )
 
@@ -397,6 +420,7 @@ def run_qf_19_oracle_vs_estimated(
 
         rows: list[dict[str, Any]] = []
         items: list[dict[str, Any]] = []
+        n_skipped = 0
 
         for r in records:
             did = _to_int(r["design_id"], "design_id")
@@ -410,7 +434,7 @@ def run_qf_19_oracle_vs_estimated(
                     r.get("te_add_intercept", True), "te_add_intercept"
                 )
             elif te_name == "lasso":
-                te_params["alpha"] = _to_float(r.get("te_alpha"), "te_alpha")
+                te_params["alpha"] = _to_float(r.get("te_alpha", 0.01), "te_alpha")
                 te_params["max_iter"] = _to_int(
                     r.get("te_max_iter", 500), "te_max_iter"
                 )
@@ -421,14 +445,21 @@ def run_qf_19_oracle_vs_estimated(
                 te_params["standardize"] = _to_bool(
                     r.get("te_standardize", True), "te_standardize"
                 )
+            elif te_name == "knn":
+                te_params["k_neighbors"] = _to_int(
+                    r.get("te_k_neighbors", 3), "te_k_neighbors"
+                )
             else:
                 raise ValueError(f"unsupported te_name: {te_name}")
 
             sel_density = float(_to_float(r["sel_density"], "sel_density"))
             sel_mode = str(r.get("sel_mode", "abs")).strip()
-            sel_exclude_self = _to_bool(
-                r.get("sel_exclude_self", True), "sel_exclude_self"
-            )
+
+            raw_ex = str(r.get("sel_exclude_self", "True")).strip()
+            if raw_ex.startswith("[") and raw_ex.endswith("]"):
+                raw_ex = raw_ex.strip("[]'\"")
+            sel_exclude_self = _to_bool(raw_ex, "sel_exclude_self")
+
             hub_k = _to_int(r["hub_k"], "hub_k")
 
             true_root = _find_true_root_from_oracle(oracle_dir, int(did), 12)
@@ -441,36 +472,28 @@ def run_qf_19_oracle_vs_estimated(
                 if os.path.isfile(true_adj_path):
                     true_adj = _read_adj(true_adj_path)
 
-            est_path = _require_file(
-                os.path.join(_trial_dir(estimated_dir, int(did)), "returns_neutral.npy")
-            )
-            R_est = _read_returns(est_path)
+            try:
+                est_path = _require_file(
+                    os.path.join(
+                        _trial_dir(estimated_dir, int(did)), "returns_neutral.npy"
+                    )
+                )
+                R_est = _read_returns(est_path)
+            except FileNotFoundError:
+                # 容错：有些生成在 17 阶段就已经失败被跳过了
+                n_skipped += 1
+                p.step(1)
+                continue
 
             ora_path = os.path.join(
                 _trial_dir(oracle_dir, int(did)), "returns_oracle_neutral.npy"
             )
             R_ora = _read_returns(ora_path) if os.path.isfile(ora_path) else None
 
-            out_est = _eval_one(
-                R_est,
-                true_adj,
-                lag=int(lag),
-                exclude_self=bool(exclude_self),
-                te_name=te_name,
-                te_params=te_params,
-                sel_density=float(sel_density),
-                sel_mode=sel_mode,
-                sel_exclude_self=bool(sel_exclude_self),
-                hub_k=int(hub_k),
-                signal_exclude_self=bool(signal_exclude_self),
-                signal_normalize=bool(signal_normalize),
-            )
-
-            out_ora = None
-            oracle_status = "missing"
-            if R_ora is not None:
-                out_ora = _eval_one(
-                    R_ora,
+            # --- 企业级容错处理（隔离 OLS/KNN 在高维或不合法情况下的崩溃） ---
+            try:
+                out_est = _eval_one(
+                    R_est,
                     true_adj,
                     lag=int(lag),
                     exclude_self=bool(exclude_self),
@@ -483,10 +506,55 @@ def run_qf_19_oracle_vs_estimated(
                     signal_exclude_self=bool(signal_exclude_self),
                     signal_normalize=bool(signal_normalize),
                 )
-                oracle_status = "ok"
+            except Exception as e:
+                logger.warn(
+                    jline(
+                        "skip",
+                        component,
+                        "est_eval_failed",
+                        design_id=did,
+                        error=str(e),
+                    )
+                )
+                n_skipped += 1
+                p.step(1)
+                continue
+
+            out_ora = None
+            oracle_status = "missing"
+            if R_ora is not None:
+                try:
+                    out_ora = _eval_one(
+                        R_ora,
+                        true_adj,
+                        lag=int(lag),
+                        exclude_self=bool(exclude_self),
+                        te_name=te_name,
+                        te_params=te_params,
+                        sel_density=float(sel_density),
+                        sel_mode=sel_mode,
+                        sel_exclude_self=bool(sel_exclude_self),
+                        hub_k=int(hub_k),
+                        signal_exclude_self=bool(signal_exclude_self),
+                        signal_normalize=bool(signal_normalize),
+                    )
+                    oracle_status = "ok"
+                except Exception as e:
+                    logger.warn(
+                        jline(
+                            "skip",
+                            component,
+                            "ora_eval_failed",
+                            design_id=did,
+                            error=str(e),
+                        )
+                    )
+                    oracle_status = "failed"
             else:
                 if not bool(oracle_optional):
                     raise FileNotFoundError(ora_path)
+
+            # -----------------------------------------------------------
 
             out_trial = _trial_dir(run_dir, int(did))
             _ensure_dir(out_trial)
@@ -579,10 +647,13 @@ def run_qf_19_oracle_vs_estimated(
                 "ora_hub_rec",
                 "trial_json",
             ]
-            out_df = out_df[cols_out].sort_values(["design_id"], ascending=[True])
+            if not out_df.empty:
+                out_df = out_df[cols_out].sort_values(["design_id"], ascending=[True])
             compare_csv_path = os.path.join(run_dir, "compare.csv")
             write_csv(
-                compare_csv_path, _rows_from_df(out_df), header=list(out_df.columns)
+                compare_csv_path,
+                _rows_from_df(out_df),
+                header=list(out_df.columns) if not out_df.empty else cols_out,
             )
             logger.info(
                 jline("output", component, "compare_csv", path=compare_csv_path)
@@ -590,6 +661,7 @@ def run_qf_19_oracle_vs_estimated(
 
         summary = {
             "n_rows": int(len(records)),
+            "n_skipped": int(n_skipped),
             "trial_root": os.path.join(run_dir, "trial"),
             "compare_csv": compare_csv_path,
             "items": items[:2000],

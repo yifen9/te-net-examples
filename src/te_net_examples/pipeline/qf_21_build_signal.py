@@ -24,6 +24,11 @@ from te_net_lib.graph.edge_select import select_fixed_density
 from te_net_lib.te.lasso_te import lasso_te_matrix
 from te_net_lib.te.linear_ols import ols_te_matrix
 
+try:
+    from te_net_lib.te.knn_te import knn_te_matrix
+except ImportError:
+    knn_te_matrix = None
+
 
 @dataclass(frozen=True, slots=True)
 class Qf21BuildSignalOut:
@@ -191,6 +196,12 @@ def _compute_nio_signal(
             bool(exclude_self),
         )
         beta = out.beta
+    elif te_name == "knn":
+        if knn_te_matrix is None:
+            raise ImportError("knn_te_matrix not found")
+        k_neighbors = int(te_params.get("k_neighbors", 3))
+        out = knn_te_matrix(returns, int(lag), k_neighbors, bool(exclude_self))
+        beta = out.beta
     else:
         raise ValueError(f"unsupported te_name: {te_name}")
 
@@ -330,6 +341,7 @@ def run_qf_21_build_signal(
         rows: list[dict[str, Any]] = []
         n_est = 0
         n_ora = 0
+        n_skipped = 0
 
         for r in records:
             did = _to_int(r["design_id"], "design_id")
@@ -343,7 +355,7 @@ def run_qf_21_build_signal(
                     r.get("te_add_intercept", True), "te_add_intercept"
                 )
             elif te_name == "lasso":
-                te_params["alpha"] = _to_float(r.get("te_alpha"), "te_alpha")
+                te_params["alpha"] = _to_float(r.get("te_alpha", 0.01), "te_alpha")
                 te_params["max_iter"] = _to_int(
                     r.get("te_max_iter", 500), "te_max_iter"
                 )
@@ -354,63 +366,43 @@ def run_qf_21_build_signal(
                 te_params["standardize"] = _to_bool(
                     r.get("te_standardize", True), "te_standardize"
                 )
+            elif te_name == "knn":
+                te_params["k_neighbors"] = _to_int(
+                    r.get("te_k_neighbors", 3), "te_k_neighbors"
+                )
             else:
                 raise ValueError(f"unsupported te_name: {te_name}")
 
             sel_density = float(_to_float(r["sel_density"], "sel_density"))
-            sel_mode = str(r.get("sel_mode", "abs")).strip()
-            sel_exclude_self = _to_bool(
-                r.get("sel_exclude_self", True), "sel_exclude_self"
-            )
 
-            est_ret = _require_file(
-                os.path.join(_trial_dir(estimated_dir, int(did)), "returns_neutral.npy")
-            )
-            R_est = _read_returns(est_ret)
-            nio_est, meta_est = _compute_nio_signal(
-                R_est,
-                lag=int(lag),
-                exclude_self=bool(exclude_self),
-                te_name=te_name,
-                te_params=te_params,
-                sel_density=float(sel_density),
-                sel_mode=sel_mode,
-                sel_exclude_self=bool(sel_exclude_self),
-                nio_exclude_self=bool(nio_exclude_self),
-                nio_normalize=bool(nio_normalize),
-            )
-            est_out = None
-            if save_trial_npy:
-                est_out = os.path.join(
-                    _trial_dir(run_dir, int(did)), "estimated", "nio.npy"
+            # 热修复 yaml 列表解析残留
+            raw_mode = str(r.get("sel_mode", "abs")).strip()
+            if raw_mode.startswith("[") and raw_mode.endswith("]"):
+                sel_mode = raw_mode.strip("[]'\"")
+            else:
+                sel_mode = raw_mode
+
+            raw_ex = str(r.get("sel_exclude_self", "True")).strip()
+            if raw_ex.startswith("[") and raw_ex.endswith("]"):
+                raw_ex = raw_ex.strip("[]'\"")
+            sel_exclude_self = _to_bool(raw_ex, "sel_exclude_self")
+
+            # 读取估计特征并进行安全处理
+            try:
+                est_ret_path = _require_file(
+                    os.path.join(
+                        _trial_dir(estimated_dir, int(did)), "returns_neutral.npy"
+                    )
                 )
-                _write_npy(est_out, nio_est)
-            rows.append(
-                {
-                    "design_id": int(did),
-                    "branch": "estimated",
-                    "dgp": str(r.get("dgp", "")),
-                    "te_name": te_name,
-                    "sel_density": str(r.get("sel_density")),
-                    "fn_n_components": str(r.get("fn_n_components", "")),
-                    "N": str(r.get("N", "")),
-                    "T": str(r.get("T", "")),
-                    "returns_path": est_ret,
-                    "signal_path": est_out if est_out is not None else "",
-                    "density_real": meta_est["density_real"],
-                    "k_selected": meta_est["k_selected"],
-                }
-            )
-            n_est += 1
-            p.step(1)
+                R_est = _read_returns(est_ret_path)
+            except FileNotFoundError:
+                n_skipped += 1
+                p.step(2)  # 跳过 est 和 ora
+                continue
 
-            ora_ret = os.path.join(
-                _trial_dir(oracle_dir, int(did)), "returns_oracle_neutral.npy"
-            )
-            if os.path.isfile(ora_ret):
-                R_ora = _read_returns(ora_ret)
-                nio_ora, meta_ora = _compute_nio_signal(
-                    R_ora,
+            try:
+                nio_est, meta_est = _compute_nio_signal(
+                    R_est,
                     lag=int(lag),
                     exclude_self=bool(exclude_self),
                     te_name=te_name,
@@ -421,29 +413,96 @@ def run_qf_21_build_signal(
                     nio_exclude_self=bool(nio_exclude_self),
                     nio_normalize=bool(nio_normalize),
                 )
-                ora_out = None
+                est_out = None
                 if save_trial_npy:
-                    ora_out = os.path.join(
-                        _trial_dir(run_dir, int(did)), "oracle", "nio.npy"
+                    est_out = os.path.join(
+                        _trial_dir(run_dir, int(did)), "estimated", "nio.npy"
                     )
-                    _write_npy(ora_out, nio_ora)
+                    _write_npy(est_out, nio_est)
                 rows.append(
                     {
                         "design_id": int(did),
-                        "branch": "oracle",
+                        "branch": "estimated",
                         "dgp": str(r.get("dgp", "")),
                         "te_name": te_name,
                         "sel_density": str(r.get("sel_density")),
                         "fn_n_components": str(r.get("fn_n_components", "")),
                         "N": str(r.get("N", "")),
                         "T": str(r.get("T", "")),
-                        "returns_path": ora_ret,
-                        "signal_path": ora_out if ora_out is not None else "",
-                        "density_real": meta_ora["density_real"],
-                        "k_selected": meta_ora["k_selected"],
+                        "returns_path": est_ret_path,
+                        "signal_path": est_out if est_out is not None else "",
+                        "density_real": meta_est["density_real"],
+                        "k_selected": meta_est["k_selected"],
                     }
                 )
-                n_ora += 1
+                n_est += 1
+            except Exception as e:
+                logger.warn(
+                    jline(
+                        "skip",
+                        component,
+                        "est_signal_failed",
+                        design_id=did,
+                        error=str(e),
+                    )
+                )
+                n_skipped += 1
+
+            p.step(1)
+
+            # 读取真实/Oracle特征并进行安全处理
+            ora_ret_path = os.path.join(
+                _trial_dir(oracle_dir, int(did)), "returns_oracle_neutral.npy"
+            )
+            if os.path.isfile(ora_ret_path):
+                R_ora = _read_returns(ora_ret_path)
+                try:
+                    nio_ora, meta_ora = _compute_nio_signal(
+                        R_ora,
+                        lag=int(lag),
+                        exclude_self=bool(exclude_self),
+                        te_name=te_name,
+                        te_params=te_params,
+                        sel_density=float(sel_density),
+                        sel_mode=sel_mode,
+                        sel_exclude_self=bool(sel_exclude_self),
+                        nio_exclude_self=bool(nio_exclude_self),
+                        nio_normalize=bool(nio_normalize),
+                    )
+                    ora_out = None
+                    if save_trial_npy:
+                        ora_out = os.path.join(
+                            _trial_dir(run_dir, int(did)), "oracle", "nio.npy"
+                        )
+                        _write_npy(ora_out, nio_ora)
+                    rows.append(
+                        {
+                            "design_id": int(did),
+                            "branch": "oracle",
+                            "dgp": str(r.get("dgp", "")),
+                            "te_name": te_name,
+                            "sel_density": str(r.get("sel_density")),
+                            "fn_n_components": str(r.get("fn_n_components", "")),
+                            "N": str(r.get("N", "")),
+                            "T": str(r.get("T", "")),
+                            "returns_path": ora_ret_path,
+                            "signal_path": ora_out if ora_out is not None else "",
+                            "density_real": meta_ora["density_real"],
+                            "k_selected": meta_ora["k_selected"],
+                        }
+                    )
+                    n_ora += 1
+                except Exception as e:
+                    logger.warn(
+                        jline(
+                            "skip",
+                            component,
+                            "ora_signal_failed",
+                            design_id=did,
+                            error=str(e),
+                        )
+                    )
+
             p.step(1)
 
         p.finish()
@@ -465,17 +524,23 @@ def run_qf_21_build_signal(
                 "density_real",
                 "k_selected",
             ]
-            out_df = out_df[cols].sort_values(
-                ["design_id", "branch"], ascending=[True, True]
-            )
+            if not out_df.empty:
+                out_df = out_df[cols].sort_values(
+                    ["design_id", "branch"], ascending=[True, True]
+                )
             index_path = os.path.join(run_dir, "signals_index.csv")
-            write_csv(index_path, _rows_from_df(out_df), header=list(out_df.columns))
+            write_csv(
+                index_path,
+                _rows_from_df(out_df),
+                header=list(out_df.columns) if not out_df.empty else cols,
+            )
             logger.info(jline("output", component, "signals_index", path=index_path))
 
         summary = {
             "n_design_rows": int(len(records)),
             "n_estimated": int(n_est),
             "n_oracle": int(n_ora),
+            "n_skipped": int(n_skipped),
             "trial_root": os.path.join(run_dir, "trial"),
             "signals_index": index_path,
         }

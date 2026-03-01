@@ -358,9 +358,16 @@ def run_qf_16_report_figures(
                 for i, k in enumerate(keys):
                     row[k] = str(name[i])
             row["n"] = int(len(sub))
+
             for c in cols:
-                v = sub[c].to_numpy(dtype=float)
+                v_series = pd.to_numeric(sub[c], errors="coerce")
+
+                if c in ["precision", "recall", "f1", "hub_rec_nio"]:
+                    v_series = v_series.fillna(0.0)
+
+                v = v_series.to_numpy(dtype=float)
                 v = v[np.isfinite(v)]
+
                 row[f"{c}_mean"] = float(v.mean()) if v.size else float("nan")
                 row[f"{c}_std"] = float(v.std(ddof=1)) if v.size >= 2 else float("nan")
             rows.append(row)
